@@ -1,0 +1,1 @@
+[{"timestamp":"2026-04-12T07:00:00Z","model":"gemini-2.5-pro","usage":{"inputTokens":900,"outputTokens":600,"cachedTokens":0}},{"timestamp":"2026-04-12T07:08:00Z","model":"gemini-2.5-pro","usage":{"inputTokens":400,"outputTokens":300,"cachedTokens":0}}]
