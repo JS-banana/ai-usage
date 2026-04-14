@@ -9,6 +9,7 @@
 - 深度研究与方案文档
 - 原生 Swift app 原型
 - P0 工程纠偏的第一轮改造
+- P1 边界骨架落地：`Persistence` / `Ingestion` / `Query`
 - 基础模块拆分：`Domain` / `Support` / `ParserCore`
 - 四个首批 parser 原型迁移到 `ParserCore`
 - 稳定 ID 与基础 diagnostics 支撑
@@ -28,24 +29,40 @@
 - `Packages/Domain` — 核心领域模型
 - `Packages/Support` — 稳定 ID、时间解析、parser 支撑工具
 - `Packages/ParserCore` — 解析器协议与首批 source adapters
+- `Packages/Persistence` — 持久化边界骨架
+- `Packages/Ingestion` — 导入协调层骨架
+- `Packages/Query` — 查询服务层骨架
 - `Packages/ParserCore/Tests/ParserCoreTests/Resources` — 正式 parser 测试资源
-- `docs/` — 研究、执行日志、任务板、实施方案
+- `docs/` — 研究、执行日志、任务板、实施方案与本地验证指南
 
-## 已完成的 P0 改进
+## 已完成的工程推进
 
+### P0
 - 用稳定 SHA256 代替 `hashValue`
 - 不再使用 `.distantPast` 作为非法时间兜底
 - parser 返回 `diagnostics` 和 `skippedRecords`
 - parser 测试迁移到独立 `ParserCoreTests`
 - fixture 已迁移到 test target 内部资源目录，供 `Bundle.module` 访问
 
+### P1 Skeleton
+- 增加 `Persistence` package skeleton
+- 增加 `Ingestion` package skeleton
+- 增加 `Query` package skeleton
+- 在 `Domain` 中补充 `ImportRun` / `SourceDescriptor` / `TrackedSourceFile`
+
 ## 下一步优先级
 
-1. 继续增强 parser contract tests
-2. 引入 Persistence package 与 SQLite/GRDB 设计
-3. 落地 ImportCoordinator / QueryService 分层
-4. 升级为正式 Xcode macOS app 工程
-5. 打磨 dashboard、source health、settings 与错误状态
+1. 在本地 Mac 接入 GRDB 并验证 SwiftPM targets
+2. 为 `Persistence` 写 migrations / DatabaseManager
+3. 让 `ImportCoordinator` 真正落库
+4. 让 Query 层替代 App 内存聚合逻辑
+5. 升级为正式 Xcode macOS app 工程
+6. 打磨 dashboard、source health、settings 与错误状态
+
+## 本地验证
+
+请优先参考：
+- `docs/local-mac-validation-guide.md`
 
 ## 注意
 

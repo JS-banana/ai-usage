@@ -10,6 +10,9 @@ let package = Package(
         .library(name: "Domain", targets: ["Domain"]),
         .library(name: "Support", targets: ["Support"]),
         .library(name: "ParserCore", targets: ["ParserCore"]),
+        .library(name: "Persistence", targets: ["Persistence"]),
+        .library(name: "Ingestion", targets: ["Ingestion"]),
+        .library(name: "Query", targets: ["Query"]),
         .executable(name: "AIUsageLocal", targets: ["AIUsageLocal"])
     ],
     targets: [
@@ -26,6 +29,21 @@ let package = Package(
             name: "ParserCore",
             dependencies: ["Domain", "Support"],
             path: "Packages/ParserCore/Sources/ParserCore"
+        ),
+        .target(
+            name: "Persistence",
+            dependencies: ["Domain"],
+            path: "Packages/Persistence/Sources/Persistence"
+        ),
+        .target(
+            name: "Ingestion",
+            dependencies: ["Domain", "ParserCore", "Support"],
+            path: "Packages/Ingestion/Sources/Ingestion"
+        ),
+        .target(
+            name: "Query",
+            dependencies: ["Domain"],
+            path: "Packages/Query/Sources/Query"
         ),
         .executableTarget(
             name: "AIUsageLocal",
