@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Domain
 
 @Observable
 final class AppState {

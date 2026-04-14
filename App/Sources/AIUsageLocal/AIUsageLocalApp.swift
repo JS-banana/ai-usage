@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Domain
 
 @main
 struct AIUsageLocalApp: App {

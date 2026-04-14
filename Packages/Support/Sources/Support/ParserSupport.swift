@@ -1,0 +1,66 @@
+import Foundation
+import CryptoKit
+import Domain
+
+public enum StableID {
+    public static func make(_ parts: [String]) -> String {
+        let input = parts.joined(separator: "||")
+        let digest = SHA256.hash(data: Data(input.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public enum DateParsing {
+    public static func parseISO8601(_ value: String?) -> Date? {
+        guard let value, value.isEmpty == false else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let result = formatter.date(from: value) {
+            return result
+        }
+        let fallback = ISO8601DateFormatter()
+        return fallback.date(from: value)
+    }
+}
+
+public enum FileDiscovery {
+    public static func expandHome(_ path: String) -> URL {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+    }
+
+    public static func listFiles(recursive root: URL, suffixes: [String]) -> [URL] {
+        guard FileManager.default.fileExists(atPath: root.path),
+              let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var urls: [URL] = []
+        for case let url as URL in enumerator {
+            if suffixes.contains(where: { url.lastPathComponent.hasSuffix($0) }) {
+                urls.append(url)
+            }
+        }
+        return urls
+    }
+}
+
+public enum ParserDiagnosticsFactory {
+    public static func warning(source: String, filePath: String, message: String) -> ParserDiagnostic {
+        ParserDiagnostic(
+            id: StableID.make([source, filePath, message, "warning"]),
+            severity: .warning,
+            source: source,
+            filePath: filePath,
+            message: message
+        )
+    }
+
+    public static func error(source: String, filePath: String, message: String) -> ParserDiagnostic {
+        ParserDiagnostic(
+            id: StableID.make([source, filePath, message, "error"]),
+            severity: .error,
+            source: source,
+            filePath: filePath,
+            message: message
+        )
+    }
+}

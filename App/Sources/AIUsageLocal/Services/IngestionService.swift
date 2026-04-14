@@ -1,4 +1,6 @@
 import Foundation
+import Domain
+import ParserCore
 
 struct IngestionSnapshot {
     let metrics: DashboardMetrics
@@ -11,7 +13,7 @@ struct IngestionSnapshot {
 }
 
 actor IngestionService {
-    private let parsers: [UsageParser] = [
+    private let parsers: [any UsageParser] = [
         ClaudeCodeParser(),
         CodexParser(),
         OpenCodeParser(),
@@ -28,14 +30,29 @@ actor IngestionService {
             let parsed = parser.parse(files: files)
             allEvents.append(contentsOf: parsed.events)
             allSessions.append(contentsOf: parsed.sessions)
+            let status: SourceStatus
+            let message: String
+            if files.isEmpty {
+                status = .warning
+                message = "未发现数据文件"
+            } else if parsed.events.isEmpty && parsed.sessions.isEmpty {
+                status = .warning
+                message = "发现文件但未解析出有效记录"
+            } else if parsed.diagnostics.contains(where: { $0.severity == .error }) {
+                status = .warning
+                message = "已导入 \(parsed.sessions.count) 个会话，存在解析错误"
+            } else {
+                status = .ready
+                message = "已导入 \(parsed.sessions.count) 个会话"
+            }
             health.append(SourceHealth(
                 id: parser.sourceID,
                 name: parser.displayName,
                 discoveredFiles: files.count,
                 importedSessions: parsed.sessions.count,
                 lastScan: Date(),
-                status: files.isEmpty ? .warning : .ready,
-                message: files.isEmpty ? "未发现数据文件" : "已导入 \(parsed.sessions.count) 个会话"
+                status: status,
+                message: message
             ))
         }
 

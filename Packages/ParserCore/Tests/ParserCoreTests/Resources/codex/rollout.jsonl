@@ -1,0 +1,2 @@
+{"timestamp":"2026-04-12T09:00:00Z","model":"gpt-5-codex","cwd":"/Users/demo/project-a","usage":{"input_tokens":1200,"output_tokens":400,"cached_input_tokens":50}}
+{"timestamp":"2026-04-12T09:02:00Z","model":"gpt-5-codex","cwd":"/Users/demo/project-a","usage":{"input_tokens":500,"output_tokens":350,"cached_input_tokens":25}}
