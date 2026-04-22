@@ -10,6 +10,7 @@ public struct ClaudeCodeParser: UsageParser {
 
     public func discoverCandidates() -> [URL] {
         FileDiscovery.listFiles(recursive: FileDiscovery.expandHome("~/.claude/projects"), suffixes: [".jsonl"])
+            .filter { $0.path.contains("claude-mem-observer-sessions") == false }
     }
 
     public func parse(files: [URL]) -> ParsedFileResult {
@@ -53,7 +54,11 @@ public struct ClaudeCodeParser: UsageParser {
                 let input = usage["input_tokens"] as? Int ?? 0
                 let output = usage["output_tokens"] as? Int ?? 0
                 let cached = usage["cache_read_input_tokens"] as? Int ?? 0
-                let total = input + output
+                let total = input + output + cached
+
+                guard lastModel != "<synthetic>", total > 0 else {
+                    continue
+                }
 
                 let event = UsageEvent(
                     id: StableID.make([sourceID, file.path, String(index), lastModel, timestamp.ISO8601Format()]),

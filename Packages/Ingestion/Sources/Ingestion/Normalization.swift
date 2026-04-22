@@ -12,14 +12,14 @@ public struct NoOpDeduplicator: Deduplicating {
 }
 
 public enum ImportNormalizer {
-    public static func makeBatch(source: SourceDescriptor, files: [URL], parsed: ParsedFileResult) -> NormalizedImportBatch {
+    public static func makeBatch(source: SourceDescriptor, files: [URL], parsed: ParsedFileResult, seenAt: Date = Date()) -> NormalizedImportBatch {
         let trackedFiles = files.map {
             TrackedSourceFile(
                 id: StableID.make([source.id, $0.path, "tracked-file"]),
                 sourceID: source.id,
                 path: $0.path,
-                fingerprint: StableID.make([$0.path, "placeholder-fingerprint"]),
-                lastSeenAt: Date(),
+                fingerprint: FileFingerprint.metadataSignature(for: $0),
+                lastSeenAt: seenAt,
                 lastImportRunID: nil
             )
         }

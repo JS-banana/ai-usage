@@ -11,28 +11,11 @@ public struct DateRange: Hashable, Sendable {
     }
 }
 
-public enum TrendGranularity: String, Hashable, Sendable {
-    case daily
-    case hourly
-}
-
 public struct DashboardSummary: Sendable {
     public let metrics: DashboardMetrics
 
     public init(metrics: DashboardMetrics) {
         self.metrics = metrics
-    }
-}
-
-public struct BreakdownRow: Identifiable, Hashable, Sendable {
-    public let id: String
-    public let name: String
-    public let value: Int
-
-    public init(id: String, name: String, value: Int) {
-        self.id = id
-        self.name = name
-        self.value = value
     }
 }
 
@@ -57,6 +40,43 @@ public struct SessionListItem: Identifiable, Hashable, Sendable {
     public init(id: String, summary: SessionSummary) {
         self.id = id
         self.summary = summary
+    }
+}
+
+public struct ProviderPanelSnapshot: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let todayTokens: Int
+    public let sevenDayTokens: Int
+    public let cachedTokens: Int
+    public let status: SourceStatus
+    public let message: String
+    public let trendPoints: [BucketPoint]
+    public let importedSessions: Int
+    public let lastRefresh: Date?
+
+    public init(
+        id: String,
+        name: String,
+        todayTokens: Int,
+        sevenDayTokens: Int,
+        cachedTokens: Int,
+        status: SourceStatus,
+        message: String,
+        trendPoints: [BucketPoint],
+        importedSessions: Int,
+        lastRefresh: Date?
+    ) {
+        self.id = id
+        self.name = name
+        self.todayTokens = todayTokens
+        self.sevenDayTokens = sevenDayTokens
+        self.cachedTokens = cachedTokens
+        self.status = status
+        self.message = message
+        self.trendPoints = trendPoints
+        self.importedSessions = importedSessions
+        self.lastRefresh = lastRefresh
     }
 }
 

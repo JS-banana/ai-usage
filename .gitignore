@@ -1,0 +1,17 @@
+# OMX local state
+.omx/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode local user/build state
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Editor local config
+.vscode/
+
+# macOS Finder metadata
+.DS_Store

@@ -1,6 +1,7 @@
 import Foundation
 import Domain
 import ParserCore
+import Support
 
 public actor ImportCoordinator {
     private let registry: SourceRegistry
@@ -41,9 +42,12 @@ public actor ImportCoordinator {
 
         for parser in parsers {
             let files = discovery.discoverFiles(using: parser)
-            let parsed = parser.parse(files: files)
             let source = SourceDescriptor(id: parser.sourceID, displayName: parser.displayName)
-            let normalized = ImportNormalizer.makeBatch(source: source, files: files, parsed: parsed)
+            let fingerprintsByPath = Dictionary(uniqueKeysWithValues: files.map { ($0.path, FileFingerprint.metadataSignature(for: $0)) })
+            let unchangedPaths = try await persistence.unchangedFilePaths(sourceID: source.id, fingerprintsByPath: fingerprintsByPath)
+            let filesToParse = files.filter { unchangedPaths.contains($0.path) == false }
+            let parsed = parser.parse(files: filesToParse)
+            let normalized = ImportNormalizer.makeBatch(source: source, files: files, parsed: parsed, seenAt: request.startedAt)
             let deduped = try await deduplicator.dedupe(batch: normalized)
             let run = try await persistence.persist(batch: deduped, trigger: request.trigger)
             lastRun = run
@@ -53,8 +57,8 @@ public actor ImportCoordinator {
                 discoveredFiles: files.count,
                 parsedEvents: parsed.events.count,
                 parsedSessions: parsed.sessions.count,
-                insertedEvents: deduped.events.count,
-                insertedSessions: deduped.sessions.count,
+                insertedEvents: run.totalEvents,
+                insertedSessions: run.totalSessions,
                 diagnostics: deduped.diagnostics,
                 status: run.status
             ))

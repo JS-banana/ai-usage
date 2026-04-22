@@ -8,6 +8,7 @@ public protocol SourceRegistry: Sendable {
 }
 
 public protocol ImportPersistence: Sendable {
+    func unchangedFilePaths(sourceID: String, fingerprintsByPath: [String: String]) async throws -> Set<String>
     func persist(batch: NormalizedImportBatch, trigger: ImportTrigger) async throws -> ImportRun
 }
 

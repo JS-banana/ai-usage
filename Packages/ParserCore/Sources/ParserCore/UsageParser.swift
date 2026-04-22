@@ -2,7 +2,7 @@ import Foundation
 import Domain
 import Support
 
-public protocol UsageParser {
+public protocol UsageParser: Sendable {
     var sourceID: String { get }
     var displayName: String { get }
     func discoverCandidates() -> [URL]
