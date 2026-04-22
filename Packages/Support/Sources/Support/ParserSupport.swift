@@ -43,6 +43,19 @@ public enum FileDiscovery {
     }
 }
 
+public enum FileFingerprint {
+    public static func metadataSignature(for fileURL: URL) -> String {
+        let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let modifiedAt = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let fileSize = values?.fileSize ?? 0
+        return StableID.make([
+            fileURL.path,
+            String(fileSize),
+            String(modifiedAt)
+        ])
+    }
+}
+
 public enum ParserDiagnosticsFactory {
     public static func warning(source: String, filePath: String, message: String) -> ParserDiagnostic {
         ParserDiagnostic(

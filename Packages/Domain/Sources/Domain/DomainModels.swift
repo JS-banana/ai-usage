@@ -123,6 +123,11 @@ public struct DashboardMetrics: Sendable {
     }
 }
 
+public enum TrendGranularity: String, Hashable, Sendable {
+    case daily
+    case hourly
+}
+
 public struct BucketPoint: Identifiable, Hashable, Sendable {
     public let id: String
     public let label: String

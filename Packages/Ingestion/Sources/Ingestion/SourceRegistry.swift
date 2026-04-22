@@ -9,8 +9,6 @@ public struct StaticSourceRegistry: SourceRegistry {
     public init(parsers: [any UsageParser] = [
         ClaudeCodeParser(),
         CodexParser(),
-        OpenCodeParser(),
-        GeminiParser(),
     ]) {
         self.parsers = parsers
     }
