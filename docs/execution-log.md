@@ -1,4 +1,4 @@
-# AI Usage Local Execution Log
+# AiUsage Execution Log
 
 ## Project Location
 

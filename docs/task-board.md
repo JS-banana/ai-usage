@@ -1,4 +1,4 @@
-# AI Usage Local Task Board
+# AiUsage Task Board
 
 ## Current Mission
 

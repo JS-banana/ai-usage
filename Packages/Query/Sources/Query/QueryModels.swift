@@ -48,6 +48,8 @@ public struct ProviderPanelSnapshot: Identifiable, Hashable, Sendable {
     public let name: String
     public let todayTokens: Int
     public let sevenDayTokens: Int
+    public let todayRequests: Int
+    public let sevenDayRequests: Int
     public let cachedTokens: Int
     public let status: SourceStatus
     public let message: String
@@ -60,6 +62,8 @@ public struct ProviderPanelSnapshot: Identifiable, Hashable, Sendable {
         name: String,
         todayTokens: Int,
         sevenDayTokens: Int,
+        todayRequests: Int,
+        sevenDayRequests: Int,
         cachedTokens: Int,
         status: SourceStatus,
         message: String,
@@ -71,6 +75,8 @@ public struct ProviderPanelSnapshot: Identifiable, Hashable, Sendable {
         self.name = name
         self.todayTokens = todayTokens
         self.sevenDayTokens = sevenDayTokens
+        self.todayRequests = todayRequests
+        self.sevenDayRequests = sevenDayRequests
         self.cachedTokens = cachedTokens
         self.status = status
         self.message = message

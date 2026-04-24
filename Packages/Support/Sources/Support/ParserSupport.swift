@@ -11,15 +11,30 @@ public enum StableID {
 }
 
 public enum DateParsing {
+    private static let formatterCache = ISO8601FormatterCache()
+
     public static func parseISO8601(_ value: String?) -> Date? {
         guard let value, value.isEmpty == false else { return nil }
+        return formatterCache.parse(value)
+    }
+}
+
+private final class ISO8601FormatterCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private let fractionalSecondsFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let result = formatter.date(from: value) {
+        return formatter
+    }()
+    private let fallbackFormatter = ISO8601DateFormatter()
+
+    func parse(_ value: String) -> Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let result = fractionalSecondsFormatter.date(from: value) {
             return result
         }
-        let fallback = ISO8601DateFormatter()
-        return fallback.date(from: value)
+        return fallbackFormatter.date(from: value)
     }
 }
 

@@ -63,7 +63,7 @@ public struct GeminiParser: UsageParser {
             let input = usage?["inputTokens"] as? Int ?? usage?["input_tokens"] as? Int ?? 0
             let output = usage?["outputTokens"] as? Int ?? usage?["output_tokens"] as? Int ?? 0
             let cached = usage?["cachedTokens"] as? Int ?? 0
-            let total = input + output
+            let total = input + output + cached
             guard total > 0 else {
                 skippedRecords += 1
                 diagnostics.append(ParserDiagnosticsFactory.warning(source: sourceID, filePath: file.path, message: "第 \(index + 1) 条记录无有效 token 信息"))

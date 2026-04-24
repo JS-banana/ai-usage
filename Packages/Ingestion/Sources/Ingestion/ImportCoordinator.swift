@@ -2,6 +2,7 @@ import Foundation
 import Domain
 import ParserCore
 import Support
+import ProviderKit
 
 public actor ImportCoordinator {
     private let registry: SourceRegistry
@@ -26,6 +27,7 @@ public actor ImportCoordinator {
             guard let sourceIDs = request.sourceIDs, sourceIDs.isEmpty == false else { return true }
             return sourceIDs.contains(parser.sourceID)
         }
+        let providerByID = Dictionary(uniqueKeysWithValues: registry.providerDescriptors().map { ($0.id, $0) })
 
         var sourceResults: [SourceImportResult] = []
         var lastRun = ImportRun(
@@ -42,7 +44,8 @@ public actor ImportCoordinator {
 
         for parser in parsers {
             let files = discovery.discoverFiles(using: parser)
-            let source = SourceDescriptor(id: parser.sourceID, displayName: parser.displayName)
+            let source = providerByID[parser.sourceID]?.sourceDescriptor
+                ?? SourceDescriptor(id: parser.sourceID, displayName: parser.displayName)
             let fingerprintsByPath = Dictionary(uniqueKeysWithValues: files.map { ($0.path, FileFingerprint.metadataSignature(for: $0)) })
             let unchangedPaths = try await persistence.unchangedFilePaths(sourceID: source.id, fingerprintsByPath: fingerprintsByPath)
             let filesToParse = files.filter { unchangedPaths.contains($0.path) == false }

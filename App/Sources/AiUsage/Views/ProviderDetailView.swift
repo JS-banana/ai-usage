@@ -9,6 +9,10 @@ struct ProviderDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                PanelDetailCard(title: "分组总额度") {
+                    QuotaSummarySection(summary: appState.groupQuotaSummary, title: "分组总额度", showsHeader: false)
+                }
+
                 if appState.selectedTabID == "overview", let overview = appState.overviewPanel {
                     Text("总览详情")
                         .font(.largeTitle.bold())
@@ -16,6 +20,8 @@ struct ProviderDetailView: View {
                     HStack(spacing: 16) {
                         DetailMetricCard(title: "今日", value: CompactNumberFormatting.fullString(overview.todayTokens))
                         DetailMetricCard(title: "本周", value: CompactNumberFormatting.fullString(overview.sevenDayTokens))
+                        DetailMetricCard(title: "今日请求", value: overview.todayRequests.formatted())
+                        DetailMetricCard(title: "本周请求", value: overview.sevenDayRequests.formatted())
                         DetailMetricCard(title: "Cached", value: CompactNumberFormatting.fullString(overview.cachedTokens))
                     }
 
@@ -34,6 +40,8 @@ struct ProviderDetailView: View {
                     HStack(spacing: 16) {
                         DetailMetricCard(title: "今日", value: CompactNumberFormatting.fullString(panel.todayTokens))
                         DetailMetricCard(title: "本周", value: CompactNumberFormatting.fullString(panel.sevenDayTokens))
+                        DetailMetricCard(title: "今日请求", value: panel.todayRequests.formatted())
+                        DetailMetricCard(title: "本周请求", value: panel.sevenDayRequests.formatted())
                         DetailMetricCard(title: "Cached", value: CompactNumberFormatting.fullString(panel.cachedTokens))
                     }
 
@@ -49,6 +57,7 @@ struct ProviderDetailView: View {
                     PanelDetailCard(title: "状态") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(panel.message)
+                            MiniMetricRow(title: "请求次数", value: panel.todayRequests.formatted())
                             MiniMetricRow(title: "已导入会话", value: panel.importedSessions.formatted())
                             if let lastRefresh = panel.lastRefresh {
                                 MiniMetricRow(title: "最近更新", value: lastRefresh.formatted(date: .abbreviated, time: .shortened))

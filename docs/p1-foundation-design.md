@@ -2,7 +2,7 @@
 
 ## Goal
 
-在 P0 工程纠偏完成后，为 AI Usage Local 落地可持续的本地数据底座：
+在 P0 工程纠偏完成后，为 AiUsage 落地可持续的本地数据底座：
 
 - SQLite/GRDB persistence
 - ImportCoordinator
