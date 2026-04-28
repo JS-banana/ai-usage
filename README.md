@@ -1,4 +1,4 @@
-# AI Usage Local
+# AiUsage
 
 一个为 macOS 设计的、**纯本地**的 AI coding usage 可视化应用工程，目标是统一查看 Claude Code、Codex CLI、OpenCode、Gemini CLI 的本地使用情况。
 

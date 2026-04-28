@@ -1,7 +1,7 @@
 import Foundation
 import Domain
 import Ingestion
-import Persistence
+import ProviderKit
 import Query
 
 struct ProviderTabItem: Identifiable, Sendable {
@@ -14,12 +14,15 @@ struct OverviewProviderRow: Identifiable, Sendable {
     let id: String
     let name: String
     let todayTokens: Int
+    let todayRequests: Int
     let status: SourceStatus
 }
 
 struct OverviewPanelSnapshot: Sendable {
     let todayTokens: Int
     let sevenDayTokens: Int
+    let todayRequests: Int
+    let sevenDayRequests: Int
     let cachedTokens: Int
     let activeSources: Int
     let trendPoints: [BucketPoint]
@@ -29,69 +32,87 @@ struct OverviewPanelSnapshot: Sendable {
 
 struct AppSnapshot: Sendable {
     let providerTabs: [ProviderTabItem]
+    let providerPreferences: [ProviderPreferenceSnapshot]
     let selectedTabID: String
     let overview: OverviewPanelSnapshot
     let panelsByID: [String: ProviderPanelSnapshot]
     let lastRefresh: Date
+    var groupQuotaSummary: GroupQuotaSummarySnapshot = .unconfigured()
+    var menuBarSummary: MenuBarSummarySnapshot = .init(
+        title: "AiUsage",
+        subtitle: "暂无数据",
+        status: .empty,
+        glyph: .empty
+    )
+    var statusMessage: String = "准备就绪"
 }
 
-actor AppDataService {
+struct AppReadModelService {
     private let sourceRegistry: SourceRegistry
-    private let importCoordinator: ImportCoordinator
     private let dashboardQuery: DashboardQueryServing
     private let sourceHealthQuery: SourceHealthQueryServing
+    private let userDefaults: UserDefaults
 
     init(
         sourceRegistry: SourceRegistry,
-        importCoordinator: ImportCoordinator,
         dashboardQuery: DashboardQueryServing,
-        sourceHealthQuery: SourceHealthQueryServing
+        sourceHealthQuery: SourceHealthQueryServing,
+        userDefaults: UserDefaults = .standard
     ) {
         self.sourceRegistry = sourceRegistry
-        self.importCoordinator = importCoordinator
         self.dashboardQuery = dashboardQuery
         self.sourceHealthQuery = sourceHealthQuery
+        self.userDefaults = userDefaults
     }
 
-    static func live() throws -> AppDataService {
-        let database = try LiveDatabase(configuration: try LiveDatabase.appSupportConfiguration())
-        let sourceRegistry = StaticSourceRegistry()
-        let dashboardQuery = LiveDashboardQueryService(analytics: database)
-        let sourceHealthQuery = LiveSourceHealthQueryService(analytics: database)
-        let coordinator = ImportCoordinator(
-            registry: sourceRegistry,
-            discovery: DefaultSourceDiscovery(),
-            deduplicator: NoOpDeduplicator(),
-            persistence: database
-        )
-        return AppDataService(
-            sourceRegistry: sourceRegistry,
-            importCoordinator: coordinator,
-            dashboardQuery: dashboardQuery,
-            sourceHealthQuery: sourceHealthQuery
-        )
-    }
-
-    func refreshAll(trigger: ImportTrigger, preferredTabID: String?) async throws -> AppSnapshot {
-        _ = try await importCoordinator.runImport(request: ImportRequest(trigger: trigger))
-
+    func makeSnapshot(preferredTabID: String?) async throws -> AppSnapshot {
         var calendar = Calendar.current
         calendar.firstWeekday = 2
         let now = Date()
+        let allDescriptors = sourceRegistry.providerDescriptors()
+        let providerPreferences = allDescriptors.map { AppPreferences.preferenceSnapshot(for: $0, userDefaults: userDefaults) }
+        let descriptors = allDescriptors.filter { AppPreferences.isSourceEnabled($0.id, userDefaults: userDefaults) }
+
+        if descriptors.isEmpty {
+            let overview = OverviewPanelSnapshot(
+                todayTokens: 0,
+                sevenDayTokens: 0,
+                todayRequests: 0,
+                sevenDayRequests: 0,
+                cachedTokens: 0,
+                activeSources: 0,
+                trendPoints: [],
+                providerRows: [],
+                lastRefresh: now
+            )
+            return AppSnapshot(
+                providerTabs: [ProviderTabItem(id: "overview", name: "总览", status: .unavailable)],
+                providerPreferences: providerPreferences,
+                selectedTabID: "overview",
+                overview: overview,
+                panelsByID: [:],
+                lastRefresh: now,
+                statusMessage: "请先在账号与配置中启用至少一个来源"
+            )
+        }
+
+        let sourceIDs = descriptors.map(\.id)
         let startOfToday = calendar.startOfDay(for: now)
         let currentWeek = currentWeekWindow(containing: now, calendar: calendar)
-
         let todayRange = DateRange(start: startOfToday, end: now)
         let currentWeekRange = DateRange(start: currentWeek.start, end: currentWeek.end)
+        let dashboardQuery = self.dashboardQuery
+        let sourceHealthQuery = self.sourceHealthQuery
 
-        async let todaySummary = dashboardQuery.summary(range: todayRange)
-        async let currentWeekSummary = dashboardQuery.summary(range: currentWeekRange)
-        async let overallTrend = dashboardQuery.trend(range: currentWeekRange, granularity: .daily)
+        async let todaySummary = dashboardQuery.summary(range: todayRange, sourceIDs: sourceIDs)
+        async let currentWeekSummary = dashboardQuery.summary(range: currentWeekRange, sourceIDs: sourceIDs)
+        async let overallTrend = dashboardQuery.trend(range: currentWeekRange, granularity: .daily, sourceIDs: sourceIDs)
         async let overallCachedBreakdown = dashboardQuery.cachedBreakdownBySource(range: todayRange, limit: 20)
         async let sourceOverview = sourceHealthQuery.sourceOverview()
 
-        let sourceHealth = Dictionary(uniqueKeysWithValues: try await sourceOverview.map { ($0.id, $0.health) })
-        let descriptors = sourceRegistry.allSources()
+        let allSourceHealth = try await sourceOverview
+        let sourceHealth = Dictionary(uniqueKeysWithValues: allSourceHealth.filter { sourceIDs.contains($0.id) }.map { ($0.id, $0.health) })
+        let cachedBreakdownByID = Dictionary(uniqueKeysWithValues: try await overallCachedBreakdown.filter { sourceIDs.contains($0.id) }.map { ($0.id, $0.value) })
 
         var panelsByID: [String: ProviderPanelSnapshot] = [:]
         for descriptor in descriptors {
@@ -103,8 +124,6 @@ actor AppDataService {
                 week: currentWeek,
                 calendar: calendar
             )
-            let cachedValue = try await dashboardQuery.cachedBreakdownBySource(range: todayRange, limit: 20)
-                .first(where: { $0.id == sourceID })?.value ?? 0
             let health = sourceHealth[sourceID] ?? SourceHealth(
                 id: sourceID,
                 name: descriptor.displayName,
@@ -117,10 +136,12 @@ actor AppDataService {
 
             panelsByID[sourceID] = ProviderPanelSnapshot(
                 id: sourceID,
-                name: shortProviderName(for: descriptor),
+                name: descriptor.displayName,
                 todayTokens: todaySummary.metrics.todayTokens,
                 sevenDayTokens: currentWeekSummary.metrics.todayTokens,
-                cachedTokens: cachedValue,
+                todayRequests: todaySummary.metrics.todayRequests,
+                sevenDayRequests: currentWeekSummary.metrics.todayRequests,
+                cachedTokens: cachedBreakdownByID[sourceID] ?? 0,
                 status: health.status,
                 message: health.message,
                 trendPoints: trendPoints,
@@ -132,45 +153,47 @@ actor AppDataService {
         let providerTabs = [ProviderTabItem(id: "overview", name: "总览", status: .ready)] + descriptors.map { descriptor in
             ProviderTabItem(
                 id: descriptor.id,
-                name: shortProviderName(for: descriptor),
+                name: descriptor.displayName,
                 status: sourceHealth[descriptor.id]?.status ?? .unavailable
             )
         }
 
         let todayMetrics = try await todaySummary.metrics
         let currentWeekMetrics = try await currentWeekSummary.metrics
-        let overallCached = try await overallCachedBreakdown.reduce(0) { $0 + $1.value }
         let overview = OverviewPanelSnapshot(
             todayTokens: todayMetrics.todayTokens,
             sevenDayTokens: currentWeekMetrics.todayTokens,
-            cachedTokens: overallCached,
+            todayRequests: todayMetrics.todayRequests,
+            sevenDayRequests: currentWeekMetrics.todayRequests,
+            cachedTokens: cachedBreakdownByID.values.reduce(0, +),
             activeSources: todayMetrics.activeSources,
             trendPoints: normalizeWeekTrend(try await overallTrend, week: currentWeek, calendar: calendar),
             providerRows: descriptors.map { descriptor in
                 let panel = panelsByID[descriptor.id]
                 return OverviewProviderRow(
                     id: descriptor.id,
-                    name: shortProviderName(for: descriptor),
+                    name: descriptor.displayName,
                     todayTokens: panel?.todayTokens ?? 0,
+                    todayRequests: panel?.todayRequests ?? 0,
                     status: sourceHealth[descriptor.id]?.status ?? .unavailable
                 )
             },
             lastRefresh: now
         )
 
-        let selectedTabID = resolvedSelectedTabID(
-            preferredTabID: preferredTabID,
-            providerTabs: providerTabs,
-            panelsByID: panelsByID,
-            overview: overview
-        )
-
         return AppSnapshot(
             providerTabs: providerTabs,
-            selectedTabID: selectedTabID,
+            providerPreferences: providerPreferences,
+            selectedTabID: resolvedSelectedTabID(
+                preferredTabID: preferredTabID,
+                providerTabs: providerTabs,
+                panelsByID: panelsByID,
+                overview: overview
+            ),
             overview: overview,
             panelsByID: panelsByID,
-            lastRefresh: now
+            lastRefresh: now,
+            statusMessage: "Usage 已刷新"
         )
     }
 
@@ -195,15 +218,6 @@ actor AppDataService {
             let id = idFormatter.string(from: day)
             let label = weekdayFormatter.string(from: day)
             return BucketPoint(id: id, label: label, value: valuesByID[id] ?? 0)
-        }
-    }
-
-    private func shortProviderName(for descriptor: SourceDescriptor) -> String {
-        switch descriptor.id {
-        case "codex": return "Codex"
-        case "claude-code": return "Claude"
-        case "gemini": return "Gemini"
-        default: return descriptor.displayName
         }
     }
 

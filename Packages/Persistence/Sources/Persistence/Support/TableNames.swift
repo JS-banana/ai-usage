@@ -8,4 +8,9 @@ public enum TableNames {
     public static let sessions = "sessions"
     public static let parserDiagnostics = "parser_diagnostics"
     public static let dailyBuckets = "daily_buckets"
+    public static let providerAccounts = "provider_accounts"
+    public static let accountRefreshRuns = "account_refresh_runs"
+    public static let accountSnapshots = "account_snapshots"
+    public static let allowanceWindows = "allowance_windows"
+    public static let accountDiagnostics = "account_diagnostics"
 }

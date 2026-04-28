@@ -1,4 +1,4 @@
-# AI Usage Local 研究与实施计划
+# AiUsage 研究与实施计划
 
 > 目标：打造一款仅本地运行、原生 Swift/SwiftUI 的 macOS AI coding usage 可视化应用，第一阶段支持 Claude Code、Codex CLI、OpenCode、Gemini CLI。
 

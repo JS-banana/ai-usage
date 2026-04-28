@@ -39,7 +39,7 @@ public struct OpenCodeParser: UsageParser {
             let input = tokens?["input"] as? Int ?? 0
             let output = tokens?["output"] as? Int ?? 0
             let cached = ((tokens?["cache"] as? [String: Any])?["read"] as? Int) ?? 0
-            let total = input + output
+            let total = input + output + cached
             guard total > 0 else {
                 skippedRecords += 1
                 diagnostics.append(ParserDiagnosticsFactory.warning(source: sourceID, filePath: file.path, message: "记录无有效 token 信息"))

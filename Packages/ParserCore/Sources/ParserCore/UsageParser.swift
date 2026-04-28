@@ -22,6 +22,7 @@ public enum ParserSessionBuilder {
             endedAt: last.timestamp,
             messages: sorted.count,
             totalTokens: sorted.reduce(0) { $0 + $1.totalTokens },
+            requestCount: sorted.reduce(0) { $0 + $1.requestCount },
             filePath: filePath
         )
     }

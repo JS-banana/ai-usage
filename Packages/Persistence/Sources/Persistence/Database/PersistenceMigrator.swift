@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import Domain
 
 public enum PersistenceMigrator {
     public static func makeMigrator() -> DatabaseMigrator {
@@ -86,6 +87,72 @@ public enum PersistenceMigrator {
                 t.column("session_count", .integer).notNull()
             }
             try db.create(index: "idx_daily_buckets_source_date", on: TableNames.dailyBuckets, columns: ["source_id", "bucket_date"], unique: true, ifNotExists: true)
+        }
+
+        migrator.registerMigration("v2_add_request_count_metrics") { db in
+            try db.alter(table: TableNames.usageEvents) { t in
+                t.add(column: "request_count", .integer).notNull().defaults(to: 0)
+                t.add(column: "request_semantic", .text).notNull().defaults(to: RequestSemantic.assistantResponse.rawValue)
+                t.add(column: "request_confidence", .text).notNull().defaults(to: MetricConfidence.estimated.rawValue)
+            }
+
+            try db.alter(table: TableNames.sessions) { t in
+                t.add(column: "request_count", .integer).notNull().defaults(to: 0)
+            }
+        }
+
+        migrator.registerMigration("v3_create_account_snapshot_tables") { db in
+            try db.create(table: TableNames.providerAccounts, ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("provider_id", .text).notNull().references(TableNames.sources, column: "id", onDelete: .cascade)
+                t.column("account_label", .text).notNull()
+                t.column("backend_label", .text).notNull()
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+            }
+
+            try db.create(table: TableNames.accountRefreshRuns, ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("account_id", .text).notNull().references(TableNames.providerAccounts, onDelete: .cascade)
+                t.column("started_at", .datetime).notNull()
+                t.column("finished_at", .datetime)
+                t.column("status", .text).notNull()
+                t.column("diagnostics_count", .integer).notNull()
+            }
+
+            try db.create(table: TableNames.accountSnapshots, ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("account_id", .text).notNull().references(TableNames.providerAccounts, onDelete: .cascade)
+                t.column("refresh_run_id", .text).references(TableNames.accountRefreshRuns, onDelete: .setNull)
+                t.column("captured_at", .datetime).notNull()
+                t.column("freshness_date", .datetime).notNull()
+                t.column("is_stale", .boolean).notNull()
+            }
+
+            try db.create(table: TableNames.allowanceWindows, ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("snapshot_id", .text).notNull().references(TableNames.accountSnapshots, onDelete: .cascade)
+                t.column("kind", .text).notNull()
+                t.column("used", .double).notNull()
+                t.column("limit_value", .double)
+                t.column("remaining", .double)
+                t.column("resets_at", .datetime)
+            }
+
+            try db.create(table: TableNames.accountDiagnostics, ifNotExists: true) { t in
+                t.column("id", .text).primaryKey()
+                t.column("account_id", .text).notNull().references(TableNames.providerAccounts, onDelete: .cascade)
+                t.column("snapshot_id", .text).references(TableNames.accountSnapshots, onDelete: .setNull)
+                t.column("severity", .text).notNull()
+                t.column("message", .text).notNull()
+                t.column("created_at", .datetime).notNull()
+            }
+
+            try db.create(index: "idx_provider_accounts_provider", on: TableNames.providerAccounts, columns: ["provider_id"], ifNotExists: true)
+            try db.create(index: "idx_account_refresh_runs_account", on: TableNames.accountRefreshRuns, columns: ["account_id", "started_at"], ifNotExists: true)
+            try db.create(index: "idx_account_snapshots_account", on: TableNames.accountSnapshots, columns: ["account_id", "captured_at"], ifNotExists: true)
+            try db.create(index: "idx_allowance_windows_snapshot", on: TableNames.allowanceWindows, columns: ["snapshot_id", "kind"], ifNotExists: true)
+            try db.create(index: "idx_account_diagnostics_account", on: TableNames.accountDiagnostics, columns: ["account_id", "created_at"], ifNotExists: true)
         }
 
         return migrator

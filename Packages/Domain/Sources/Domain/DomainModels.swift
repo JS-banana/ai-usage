@@ -1,5 +1,14 @@
 import Foundation
 
+public enum RequestSemantic: String, Hashable, Sendable {
+    case assistantResponse
+}
+
+public enum MetricConfidence: String, Hashable, Sendable {
+    case estimated
+    case high
+}
+
 public struct SourceHealth: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
@@ -36,8 +45,24 @@ public struct UsageEvent: Identifiable, Hashable, Sendable {
     public let outputTokens: Int
     public let cachedTokens: Int
     public let totalTokens: Int
+    public let requestCount: Int
+    public let requestSemantic: RequestSemantic
+    public let requestConfidence: MetricConfidence
 
-    public init(id: String, source: String, model: String, project: String, timestamp: Date, inputTokens: Int, outputTokens: Int, cachedTokens: Int, totalTokens: Int) {
+    public init(
+        id: String,
+        source: String,
+        model: String,
+        project: String,
+        timestamp: Date,
+        inputTokens: Int,
+        outputTokens: Int,
+        cachedTokens: Int,
+        totalTokens: Int,
+        requestCount: Int = 1,
+        requestSemantic: RequestSemantic = .assistantResponse,
+        requestConfidence: MetricConfidence = .estimated
+    ) {
         self.id = id
         self.source = source
         self.model = model
@@ -47,6 +72,9 @@ public struct UsageEvent: Identifiable, Hashable, Sendable {
         self.outputTokens = max(0, outputTokens)
         self.cachedTokens = max(0, cachedTokens)
         self.totalTokens = max(0, totalTokens)
+        self.requestCount = max(0, requestCount)
+        self.requestSemantic = requestSemantic
+        self.requestConfidence = requestConfidence
     }
 }
 
@@ -59,9 +87,10 @@ public struct SessionSummary: Identifiable, Hashable, Sendable {
     public let endedAt: Date
     public let messages: Int
     public let totalTokens: Int
+    public let requestCount: Int
     public let filePath: String
 
-    public init(id: String, source: String, model: String, project: String, startedAt: Date, endedAt: Date, messages: Int, totalTokens: Int, filePath: String) {
+    public init(id: String, source: String, model: String, project: String, startedAt: Date, endedAt: Date, messages: Int, totalTokens: Int, requestCount: Int = 0, filePath: String) {
         self.id = id
         self.source = source
         self.model = model
@@ -70,6 +99,7 @@ public struct SessionSummary: Identifiable, Hashable, Sendable {
         self.endedAt = max(startedAt, endedAt)
         self.messages = max(0, messages)
         self.totalTokens = max(0, totalTokens)
+        self.requestCount = max(0, requestCount)
         self.filePath = filePath
     }
 }
@@ -112,12 +142,16 @@ public struct ParsedFileResult: Sendable {
 public struct DashboardMetrics: Sendable {
     public var todayTokens: Int
     public var sevenDayTokens: Int
+    public var todayRequests: Int
+    public var sevenDayRequests: Int
     public var sessionCount: Int
     public var activeSources: Int
 
-    public init(todayTokens: Int, sevenDayTokens: Int, sessionCount: Int, activeSources: Int) {
+    public init(todayTokens: Int, sevenDayTokens: Int, todayRequests: Int = 0, sevenDayRequests: Int = 0, sessionCount: Int, activeSources: Int) {
         self.todayTokens = todayTokens
         self.sevenDayTokens = sevenDayTokens
+        self.todayRequests = todayRequests
+        self.sevenDayRequests = sevenDayRequests
         self.sessionCount = sessionCount
         self.activeSources = activeSources
     }

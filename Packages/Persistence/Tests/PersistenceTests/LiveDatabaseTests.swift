@@ -1,7 +1,6 @@
 import XCTest
 import Foundation
 import Domain
-import Ingestion
 @testable import Persistence
 
 final class LiveDatabaseTests: XCTestCase {
@@ -9,6 +8,72 @@ final class LiveDatabaseTests: XCTestCase {
         let (database, databasePath) = try makeDatabase()
         _ = database
         XCTAssertTrue(FileManager.default.fileExists(atPath: databasePath))
+    }
+
+    func testDatabaseCreatesAccountSnapshotTables() throws {
+        let tempDirectory = try makeTemporaryDirectory()
+        let databasePath = tempDirectory.appendingPathComponent("usage.sqlite").path
+        let manager = try DatabaseManager(configuration: PersistenceConfiguration(location: DatabaseLocation(path: databasePath)))
+
+        let tableNames = try manager.dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                """
+            )
+        }
+
+        XCTAssertTrue(tableNames.contains(TableNames.providerAccounts))
+        XCTAssertTrue(tableNames.contains(TableNames.accountRefreshRuns))
+        XCTAssertTrue(tableNames.contains(TableNames.accountSnapshots))
+        XCTAssertTrue(tableNames.contains(TableNames.allowanceWindows))
+        XCTAssertTrue(tableNames.contains(TableNames.accountDiagnostics))
+    }
+
+    func testAppSupportConfigurationUsesAiUsageDirectoryWhenFresh() throws {
+        let appSupportURL = try makeTemporaryDirectory()
+
+        let configuration = try LiveDatabase.appSupportConfiguration(
+            fileManager: .default,
+            appSupportURL: appSupportURL
+        )
+
+        XCTAssertEqual(
+            configuration.location.path,
+            appSupportURL
+                .appendingPathComponent("AiUsage", isDirectory: true)
+                .appendingPathComponent("usage.sqlite")
+                .path
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: appSupportURL.appendingPathComponent("AiUsage", isDirectory: true).path
+            )
+        )
+    }
+
+    func testAppSupportConfigurationMigratesLegacyDirectory() throws {
+        let fileManager = FileManager.default
+        let appSupportURL = try makeTemporaryDirectory()
+        let legacyDirectoryURL = appSupportURL.appendingPathComponent("AIUsageLocal", isDirectory: true)
+        try fileManager.createDirectory(at: legacyDirectoryURL, withIntermediateDirectories: true)
+        let legacyDatabaseURL = legacyDirectoryURL.appendingPathComponent("usage.sqlite")
+        try Data("legacy".utf8).write(to: legacyDatabaseURL)
+
+        let configuration = try LiveDatabase.appSupportConfiguration(
+            fileManager: fileManager,
+            appSupportURL: appSupportURL
+        )
+
+        let migratedDatabaseURL = appSupportURL
+            .appendingPathComponent("AiUsage", isDirectory: true)
+            .appendingPathComponent("usage.sqlite")
+        XCTAssertEqual(configuration.location.path, migratedDatabaseURL.path)
+        XCTAssertTrue(fileManager.fileExists(atPath: migratedDatabaseURL.path))
+        XCTAssertFalse(fileManager.fileExists(atPath: legacyDatabaseURL.path))
     }
 
     func testPersistBatchFeedsQueries() async throws {
@@ -31,7 +96,8 @@ final class LiveDatabaseTests: XCTestCase {
             inputTokens: 100,
             outputTokens: 50,
             cachedTokens: 25,
-            totalTokens: 175
+            totalTokens: 175,
+            requestCount: 1
         )
         let session = SessionSummary(
             id: "session-1",
@@ -42,6 +108,7 @@ final class LiveDatabaseTests: XCTestCase {
             endedAt: now,
             messages: 1,
             totalTokens: 175,
+            requestCount: 1,
             filePath: file.path
         )
         let batch = NormalizedImportBatch(
@@ -57,12 +124,14 @@ final class LiveDatabaseTests: XCTestCase {
 
         let metrics = try await database.dashboardMetrics(start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60))
         XCTAssertEqual(metrics.todayTokens, 175)
+        XCTAssertEqual(metrics.todayRequests, 1)
         XCTAssertEqual(metrics.sessionCount, 1)
         XCTAssertEqual(metrics.activeSources, 1)
 
         let sessions = try await database.recentSessions(limit: 10)
         XCTAssertEqual(sessions.count, 1)
         XCTAssertEqual(sessions.first?.totalTokens, 175)
+        XCTAssertEqual(sessions.first?.requestCount, 1)
 
         let health = try await database.sourceHealthOverview()
         XCTAssertEqual(health.count, 1)
@@ -90,7 +159,8 @@ final class LiveDatabaseTests: XCTestCase {
             inputTokens: 120,
             outputTokens: 30,
             cachedTokens: 10,
-            totalTokens: 160
+            totalTokens: 160,
+            requestCount: 1
         )
         let session = SessionSummary(
             id: "session-1",
@@ -101,6 +171,7 @@ final class LiveDatabaseTests: XCTestCase {
             endedAt: now,
             messages: 1,
             totalTokens: 160,
+            requestCount: 1,
             filePath: file.path
         )
         let batch = NormalizedImportBatch(
@@ -117,6 +188,7 @@ final class LiveDatabaseTests: XCTestCase {
 
         let metrics = try await database.dashboardMetrics(start: now.addingTimeInterval(-60), end: now.addingTimeInterval(60))
         XCTAssertEqual(metrics.todayTokens, 160)
+        XCTAssertEqual(metrics.todayRequests, 1)
         XCTAssertEqual(metrics.sessionCount, 1)
     }
 
@@ -150,11 +222,16 @@ final class LiveDatabaseTests: XCTestCase {
     }
 
     private func makeDatabase() throws -> (LiveDatabase, String) {
-        let tempDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let tempDirectory = try makeTemporaryDirectory()
         let databasePath = tempDirectory.appendingPathComponent("usage.sqlite").path
         let configuration = PersistenceConfiguration(location: DatabaseLocation(path: databasePath))
         return (try LiveDatabase(configuration: configuration), databasePath)
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let tempDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        return tempDirectory
     }
 }

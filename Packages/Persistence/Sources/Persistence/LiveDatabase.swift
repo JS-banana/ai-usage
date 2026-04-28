@@ -1,7 +1,6 @@
 import Foundation
 import GRDB
 import Domain
-import Ingestion
 import Support
 
 public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
@@ -12,15 +11,51 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
     }
 
     public nonisolated static func appSupportConfiguration() throws -> PersistenceConfiguration {
-        let appSupportURL = try FileManager.default.url(
+        try appSupportConfiguration(fileManager: .default)
+    }
+
+    static func appSupportConfiguration(
+        fileManager: FileManager,
+        appSupportURL overrideAppSupportURL: URL? = nil
+    ) throws -> PersistenceConfiguration {
+        let appSupportURL = try overrideAppSupportURL ?? fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
         )
-        let directoryURL = appSupportURL.appendingPathComponent("AIUsageLocal", isDirectory: true)
+        let directoryURL = try resolvedAppSupportDirectory(fileManager: fileManager, appSupportURL: appSupportURL)
         let databaseURL = directoryURL.appendingPathComponent("usage.sqlite")
         return PersistenceConfiguration(location: DatabaseLocation(path: databaseURL.path))
+    }
+
+    static func resolvedAppSupportDirectory(
+        fileManager: FileManager,
+        appSupportURL: URL
+    ) throws -> URL {
+        let directoryURL = appSupportURL.appendingPathComponent("AiUsage", isDirectory: true)
+        let legacyDirectoryURL = appSupportURL.appendingPathComponent("AIUsageLocal", isDirectory: true)
+        let databaseURL = directoryURL.appendingPathComponent("usage.sqlite")
+        let legacyDatabaseURL = legacyDirectoryURL.appendingPathComponent("usage.sqlite")
+
+        if fileManager.fileExists(atPath: databaseURL.path) {
+            return directoryURL
+        }
+
+        if fileManager.fileExists(atPath: legacyDirectoryURL.path),
+           fileManager.fileExists(atPath: directoryURL.path) == false {
+            try fileManager.moveItem(at: legacyDirectoryURL, to: directoryURL)
+            return directoryURL
+        }
+
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        if fileManager.fileExists(atPath: legacyDatabaseURL.path),
+           fileManager.fileExists(atPath: databaseURL.path) == false {
+            try fileManager.moveItem(at: legacyDatabaseURL, to: databaseURL)
+        }
+
+        return directoryURL
     }
 
     public func unchangedFilePaths(sourceID: String, fingerprintsByPath: [String: String]) async throws -> Set<String> {
@@ -91,6 +126,7 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                 sql: """
                 SELECT
                     COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(SUM(request_count), 0) AS request_count,
                     COUNT(DISTINCT id) AS event_count,
                     COUNT(DISTINCT source_id) AS active_sources
                 FROM \(TableNames.usageEvents)
@@ -105,10 +141,13 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                 arguments: sessionRange.arguments
             ) ?? 0
             let total: Int = row?["total_tokens"] ?? 0
+            let requestCount: Int = row?["request_count"] ?? 0
             let activeSources: Int = row?["active_sources"] ?? 0
             return DashboardMetrics(
                 todayTokens: total,
                 sevenDayTokens: total,
+                todayRequests: requestCount,
+                sevenDayRequests: requestCount,
                 sessionCount: sessionCount,
                 activeSources: activeSources
             )
@@ -182,13 +221,21 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                 clauses.append("source_id IN (\(Array(repeating: "?", count: filter.sourceIDs.count).joined(separator: ",")))")
                 arguments += StatementArguments(filter.sourceIDs)
             }
+            if filter.models.isEmpty == false {
+                clauses.append("model IN (\(Array(repeating: "?", count: filter.models.count).joined(separator: ",")))")
+                arguments += StatementArguments(filter.models)
+            }
+            if filter.projects.isEmpty == false {
+                clauses.append("project IN (\(Array(repeating: "?", count: filter.projects.count).joined(separator: ",")))")
+                arguments += StatementArguments(filter.projects)
+            }
 
             let whereClause = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
             let limitClause = limit.map { "LIMIT \($0)" } ?? ""
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT id, source_id, model, project, started_at, ended_at, messages, total_tokens, file_path
+                SELECT id, source_id, model, project, started_at, ended_at, messages, total_tokens, request_count, file_path
                 FROM \(TableNames.sessions)
                 \(whereClause)
                 ORDER BY ended_at DESC
@@ -310,7 +357,7 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT id, source_id, model, project, timestamp, input_tokens, output_tokens, cached_tokens, total_tokens
+                SELECT id, source_id, model, project, timestamp, input_tokens, output_tokens, cached_tokens, total_tokens, request_count, request_semantic, request_confidence
                 FROM \(TableNames.usageEvents)
                 \(range.whereClause)
                 ORDER BY timestamp ASC
@@ -327,7 +374,10 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                     inputTokens: row["input_tokens"],
                     outputTokens: row["output_tokens"],
                     cachedTokens: row["cached_tokens"],
-                    totalTokens: row["total_tokens"]
+                    totalTokens: row["total_tokens"],
+                    requestCount: row["request_count"],
+                    requestSemantic: RequestSemantic(rawValue: row["request_semantic"]) ?? .assistantResponse,
+                    requestConfidence: MetricConfidence(rawValue: row["request_confidence"]) ?? .estimated
                 )
             }
         }
@@ -413,8 +463,8 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
         for event in events {
             try db.execute(
                 sql: """
-                INSERT INTO \(TableNames.usageEvents) (id, source_id, model, project, timestamp, input_tokens, output_tokens, cached_tokens, total_tokens)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO \(TableNames.usageEvents) (id, source_id, model, project, timestamp, input_tokens, output_tokens, cached_tokens, total_tokens, request_count, request_semantic, request_confidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     model = excluded.model,
                     project = excluded.project,
@@ -422,9 +472,12 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                     input_tokens = excluded.input_tokens,
                     output_tokens = excluded.output_tokens,
                     cached_tokens = excluded.cached_tokens,
-                    total_tokens = excluded.total_tokens
+                    total_tokens = excluded.total_tokens,
+                    request_count = excluded.request_count,
+                    request_semantic = excluded.request_semantic,
+                    request_confidence = excluded.request_confidence
                 """,
-                arguments: [event.id, event.source, event.model, event.project, event.timestamp, event.inputTokens, event.outputTokens, event.cachedTokens, event.totalTokens]
+                arguments: [event.id, event.source, event.model, event.project, event.timestamp, event.inputTokens, event.outputTokens, event.cachedTokens, event.totalTokens, event.requestCount, event.requestSemantic.rawValue, event.requestConfidence.rawValue]
             )
         }
     }
@@ -433,8 +486,8 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
         for session in sessions {
             try db.execute(
                 sql: """
-                INSERT INTO \(TableNames.sessions) (id, source_id, model, project, started_at, ended_at, messages, total_tokens, file_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO \(TableNames.sessions) (id, source_id, model, project, started_at, ended_at, messages, total_tokens, request_count, file_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     model = excluded.model,
                     project = excluded.project,
@@ -442,9 +495,10 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                     ended_at = excluded.ended_at,
                     messages = excluded.messages,
                     total_tokens = excluded.total_tokens,
+                    request_count = excluded.request_count,
                     file_path = excluded.file_path
                 """,
-                arguments: [session.id, session.source, session.model, session.project, session.startedAt, session.endedAt, session.messages, session.totalTokens, session.filePath]
+                arguments: [session.id, session.source, session.model, session.project, session.startedAt, session.endedAt, session.messages, session.totalTokens, session.requestCount, session.filePath]
             )
         }
     }
@@ -476,6 +530,7 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
             endedAt: row["ended_at"],
             messages: row["messages"],
             totalTokens: row["total_tokens"],
+            requestCount: row["request_count"],
             filePath: row["file_path"]
         )
     }

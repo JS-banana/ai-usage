@@ -2,18 +2,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "AIUsageLocal",
+    name: "AiUsage",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .library(name: "Domain", targets: ["Domain"]),
+        .library(name: "ProviderKit", targets: ["ProviderKit"]),
         .library(name: "Support", targets: ["Support"]),
         .library(name: "ParserCore", targets: ["ParserCore"]),
         .library(name: "Persistence", targets: ["Persistence"]),
         .library(name: "Ingestion", targets: ["Ingestion"]),
         .library(name: "Query", targets: ["Query"]),
-        .executable(name: "AIUsageLocal", targets: ["AIUsageLocal"])
+        .executable(name: "AiUsage", targets: ["AiUsage"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.5.0")
@@ -29,6 +30,11 @@ let package = Package(
             path: "Packages/Support/Sources/Support"
         ),
         .target(
+            name: "ProviderKit",
+            dependencies: ["Domain"],
+            path: "Packages/ProviderKit/Sources/ProviderKit"
+        ),
+        .target(
             name: "ParserCore",
             dependencies: ["Domain", "Support"],
             path: "Packages/ParserCore/Sources/ParserCore"
@@ -38,14 +44,13 @@ let package = Package(
             dependencies: [
                 "Domain",
                 "Support",
-                "Ingestion",
                 .product(name: "GRDB", package: "GRDB.swift")
             ],
             path: "Packages/Persistence/Sources/Persistence"
         ),
         .target(
             name: "Ingestion",
-            dependencies: ["Domain", "ParserCore", "Support"],
+            dependencies: ["Domain", "ProviderKit", "ParserCore", "Support"],
             path: "Packages/Ingestion/Sources/Ingestion"
         ),
         .target(
@@ -54,9 +59,9 @@ let package = Package(
             path: "Packages/Query/Sources/Query"
         ),
         .executableTarget(
-            name: "AIUsageLocal",
-            dependencies: ["Domain", "Ingestion", "Persistence", "Query"],
-            path: "App/Sources/AIUsageLocal",
+            name: "AiUsage",
+            dependencies: ["Domain", "ProviderKit", "Ingestion", "Persistence", "Query"],
+            path: "App/Sources/AiUsage",
             resources: [.copy("Resources")]
         ),
         .testTarget(
@@ -72,18 +77,18 @@ let package = Package(
         ),
         .testTarget(
             name: "PersistenceTests",
-            dependencies: ["Persistence", "Ingestion", "Domain", "Support"],
+            dependencies: ["Persistence", "Domain", "Support"],
             path: "Packages/Persistence/Tests/PersistenceTests"
         ),
         .testTarget(
             name: "QueryTests",
-            dependencies: ["Query", "Persistence", "Ingestion", "Domain", "Support"],
+            dependencies: ["Query", "Persistence", "Domain", "Support"],
             path: "Packages/Query/Tests/QueryTests"
         ),
         .testTarget(
-            name: "AIUsageLocalTests",
-            dependencies: ["AIUsageLocal", "Support"],
-            path: "App/Tests/AIUsageLocalTests"
+            name: "AiUsageTests",
+            dependencies: ["AiUsage", "Support"],
+            path: "App/Tests/AiUsageTests"
         )
     ]
 )

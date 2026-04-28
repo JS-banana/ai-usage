@@ -1,7 +1,6 @@
 import XCTest
 import Foundation
 import Domain
-import Ingestion
 import Persistence
 @testable import Query
 
@@ -26,7 +25,8 @@ final class LiveQueryServiceTests: XCTestCase {
             inputTokens: 100,
             outputTokens: 60,
             cachedTokens: 40,
-            totalTokens: 200
+            totalTokens: 200,
+            requestCount: 1
         )
         let session = SessionSummary(
             id: "session-1",
@@ -37,6 +37,7 @@ final class LiveQueryServiceTests: XCTestCase {
             endedAt: now,
             messages: 1,
             totalTokens: 200,
+            requestCount: 1,
             filePath: file.path
         )
         let batch = NormalizedImportBatch(
@@ -57,6 +58,7 @@ final class LiveQueryServiceTests: XCTestCase {
 
         let summary = try await dashboard.summary(range: range)
         XCTAssertEqual(summary.metrics.todayTokens, 200)
+        XCTAssertEqual(summary.metrics.todayRequests, 1)
         XCTAssertEqual(summary.metrics.sessionCount, 1)
 
         let trend = try await dashboard.trend(range: range, granularity: .daily)
@@ -90,7 +92,7 @@ final class LiveQueryServiceTests: XCTestCase {
                 UsageEvent(id: "claude-event", source: claudeSource.id, model: "claude-sonnet-4", project: "demo", timestamp: now, inputTokens: 100, outputTokens: 50, cachedTokens: 25, totalTokens: 175)
             ],
             sessions: [
-                SessionSummary(id: "claude-session", source: claudeSource.id, model: "claude-sonnet-4", project: "demo", startedAt: now, endedAt: now, messages: 1, totalTokens: 175, filePath: "/tmp/claude.jsonl")
+                SessionSummary(id: "claude-session", source: claudeSource.id, model: "claude-sonnet-4", project: "demo", startedAt: now, endedAt: now, messages: 1, totalTokens: 175, requestCount: 1, filePath: "/tmp/claude.jsonl")
             ],
             diagnostics: [],
             skippedRecords: 0
@@ -103,10 +105,10 @@ final class LiveQueryServiceTests: XCTestCase {
                 TrackedSourceFile(id: "codex-file", sourceID: codexSource.id, path: "/tmp/codex.jsonl", fingerprint: "fp-2", lastSeenAt: now)
             ],
             events: [
-                UsageEvent(id: "codex-event", source: codexSource.id, model: "gpt-5-codex", project: "demo", timestamp: now, inputTokens: 300, outputTokens: 100, cachedTokens: 50, totalTokens: 450)
+                UsageEvent(id: "codex-event", source: codexSource.id, model: "gpt-5-codex", project: "demo", timestamp: now, inputTokens: 300, outputTokens: 100, cachedTokens: 50, totalTokens: 450, requestCount: 1)
             ],
             sessions: [
-                SessionSummary(id: "codex-session", source: codexSource.id, model: "gpt-5-codex", project: "demo", startedAt: now, endedAt: now, messages: 1, totalTokens: 450, filePath: "/tmp/codex.jsonl")
+                SessionSummary(id: "codex-session", source: codexSource.id, model: "gpt-5-codex", project: "demo", startedAt: now, endedAt: now, messages: 1, totalTokens: 450, requestCount: 1, filePath: "/tmp/codex.jsonl")
             ],
             diagnostics: [],
             skippedRecords: 0
@@ -120,15 +122,46 @@ final class LiveQueryServiceTests: XCTestCase {
 
         let claudeSummary = try await dashboard.summary(range: range, sourceIDs: ["claude-code"])
         XCTAssertEqual(claudeSummary.metrics.todayTokens, 175)
+        XCTAssertEqual(claudeSummary.metrics.todayRequests, 1)
         XCTAssertEqual(claudeSummary.metrics.sessionCount, 1)
 
         let codexSummary = try await dashboard.summary(range: range, sourceIDs: ["codex"])
         XCTAssertEqual(codexSummary.metrics.todayTokens, 450)
+        XCTAssertEqual(codexSummary.metrics.todayRequests, 1)
         XCTAssertEqual(codexSummary.metrics.sessionCount, 1)
 
         let codexTrend = try await dashboard.trend(range: range, granularity: .daily, sourceIDs: ["codex"])
         XCTAssertEqual(codexTrend.count, 1)
         XCTAssertEqual(codexTrend.first?.value, 450)
+    }
+
+    func testSessionsQueryFiltersByModelAndProject() async throws {
+        let database = try makeDatabase()
+        let now = Date()
+        let source = SourceDescriptor(id: "claude-code", displayName: "Claude Code")
+        let batch = NormalizedImportBatch(
+            source: source,
+            sourceFiles: [
+                TrackedSourceFile(id: "file-1", sourceID: source.id, path: "/tmp/demo-a.jsonl", fingerprint: "fp-1", lastSeenAt: now),
+                TrackedSourceFile(id: "file-2", sourceID: source.id, path: "/tmp/demo-b.jsonl", fingerprint: "fp-2", lastSeenAt: now)
+            ],
+            events: [],
+            sessions: [
+                SessionSummary(id: "session-1", source: source.id, model: "claude-sonnet-4", project: "alpha", startedAt: now, endedAt: now, messages: 1, totalTokens: 100, requestCount: 1, filePath: "/tmp/demo-a.jsonl"),
+                SessionSummary(id: "session-2", source: source.id, model: "claude-haiku-3", project: "beta", startedAt: now, endedAt: now, messages: 1, totalTokens: 80, requestCount: 1, filePath: "/tmp/demo-b.jsonl")
+            ],
+            diagnostics: [],
+            skippedRecords: 0
+        )
+
+        _ = try await database.persist(batch: batch, trigger: .startup)
+
+        let sessionsQuery = LiveSessionsQueryService(analytics: database)
+        let modelFiltered = try await sessionsQuery.sessions(filter: SessionFilter(models: ["claude-sonnet-4"]))
+        XCTAssertEqual(modelFiltered.map(\.summary.id), ["session-1"])
+
+        let projectFiltered = try await sessionsQuery.sessions(filter: SessionFilter(projects: ["beta"]))
+        XCTAssertEqual(projectFiltered.map(\.summary.id), ["session-2"])
     }
 
     private func makeDatabase() throws -> LiveDatabase {

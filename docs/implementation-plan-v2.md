@@ -1,4 +1,4 @@
-# AI Usage Local 复盘审查与二次实施方案
+# AiUsage 复盘审查与二次实施方案
 
 > **For Hermes:** 后续实现应按此方案拆分模块、补齐测试、先修工程基础再扩功能。
 
@@ -73,10 +73,10 @@
 ### 建议目标结构
 
 ```text
-AIUsageLocal/
+AiUsage/
 ├── App/
-│   ├── AIUsageLocal.xcodeproj         # 真正的 macOS app 工程
-│   ├── AIUsageLocalApp/               # App entry / scenes / assets / plist / entitlements
+│   ├── AiUsage.xcodeproj         # 真正的 macOS app 工程
+│   ├── AiUsageApp/               # App entry / scenes / assets / plist / entitlements
 │   └── Packages/
 │       ├── Domain/
 │       ├── Ingestion/
@@ -342,7 +342,7 @@ public protocol UsageParser {
 **Objective:** 将当前单模块原型升级为分层模块工程
 
 **Files:**
-- Create: `App/AIUsageLocal.xcodeproj`
+- Create: `App/AiUsage.xcodeproj`
 - Create: `App/Packages/Domain/`
 - Create: `App/Packages/Parsers/`
 - Create: `App/Packages/Ingestion/`

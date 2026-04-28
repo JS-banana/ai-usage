@@ -1,15 +1,12 @@
 import Foundation
 import Domain
 import ParserCore
+import ProviderKit
 
 public protocol SourceRegistry: Sendable {
     func allSources() -> [SourceDescriptor]
+    func providerDescriptors() -> [ProviderDescriptor]
     func enabledParsers() -> [any UsageParser]
-}
-
-public protocol ImportPersistence: Sendable {
-    func unchangedFilePaths(sourceID: String, fingerprintsByPath: [String: String]) async throws -> Set<String>
-    func persist(batch: NormalizedImportBatch, trigger: ImportTrigger) async throws -> ImportRun
 }
 
 public protocol Deduplicating: Sendable {

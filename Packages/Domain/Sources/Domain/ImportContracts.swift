@@ -1,5 +1,4 @@
 import Foundation
-import Domain
 
 public struct ImportRequest: Sendable {
     public let sourceIDs: [String]?
@@ -63,4 +62,9 @@ public struct NormalizedImportBatch: Sendable {
         self.diagnostics = diagnostics
         self.skippedRecords = skippedRecords
     }
+}
+
+public protocol ImportPersistence: Sendable {
+    func unchangedFilePaths(sourceID: String, fingerprintsByPath: [String: String]) async throws -> Set<String>
+    func persist(batch: NormalizedImportBatch, trigger: ImportTrigger) async throws -> ImportRun
 }

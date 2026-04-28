@@ -47,9 +47,9 @@ open Package.swift
 - `Persistence`
 - `Ingestion`
 - `Query`
-- `AIUsageLocal`
+- `AiUsage`
 - `ParserCoreTests`
-- `AIUsageLocalTests`
+- `AiUsageTests`
 
 ## Step 4: Run Tests
 

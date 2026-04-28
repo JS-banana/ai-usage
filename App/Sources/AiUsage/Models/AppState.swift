@@ -11,14 +11,31 @@ final class AppState {
     var lastRefresh: Date?
     var statusMessage = "准备就绪"
     var providerTabs: [ProviderTabItem] = []
+    var providerPreferences: [ProviderPreferenceSnapshot] = []
     var selectedTabID: String?
     var overviewPanel: OverviewPanelSnapshot?
     var providerPanelsByID: [String: ProviderPanelSnapshot] = [:]
+    var groupQuotaSummary: GroupQuotaSummarySnapshot = .unconfigured()
+    var menuBarSummary: MenuBarSummarySnapshot = .init(
+        title: "AiUsage",
+        subtitle: "暂无数据",
+        status: .empty,
+        glyph: .empty
+    )
 
-    private let dataService: AppDataService
+    private let dataService: AppDataService?
+    private let bootstrapErrorMessage: String?
 
-    init(dataService: AppDataService = try! .live()) {
+    init(dataService: AppDataService) {
         self.dataService = dataService
+        self.bootstrapErrorMessage = nil
+    }
+
+    init(bootstrapError: any Error) {
+        let message = "启动失败：\(bootstrapError.localizedDescription)"
+        self.dataService = nil
+        self.bootstrapErrorMessage = message
+        self.statusMessage = message
     }
 
     var selectedPanel: ProviderPanelSnapshot? {
@@ -29,6 +46,7 @@ final class AppState {
     func startIfNeeded() async {
         guard hasBootstrapped == false else { return }
         hasBootstrapped = true
+        guard dataService != nil else { return }
         await refresh(trigger: .startup)
     }
 
@@ -39,6 +57,10 @@ final class AppState {
 
     func refresh(trigger: ImportTrigger = .manual) async {
         guard isLoading == false else { return }
+        guard let dataService else {
+            statusMessage = bootstrapErrorMessage ?? "刷新失败：数据服务未初始化"
+            return
+        }
         isLoading = true
         statusMessage = "正在刷新数据…"
         defer { isLoading = false }
@@ -46,11 +68,14 @@ final class AppState {
         do {
             let snapshot = try await dataService.refreshAll(trigger: trigger, preferredTabID: selectedTabID)
             providerTabs = snapshot.providerTabs
+            providerPreferences = snapshot.providerPreferences
             overviewPanel = snapshot.overview
             providerPanelsByID = snapshot.panelsByID
+            groupQuotaSummary = snapshot.groupQuotaSummary
+            menuBarSummary = snapshot.menuBarSummary
             selectedTabID = snapshot.selectedTabID
             lastRefresh = snapshot.lastRefresh
-            statusMessage = "已完成刷新"
+            statusMessage = snapshot.statusMessage
         } catch {
             statusMessage = "刷新失败：\(error.localizedDescription)"
         }
@@ -58,5 +83,19 @@ final class AppState {
 
     func selectTab(_ tabID: String) {
         selectedTabID = tabID
+    }
+
+    func setProviderEnabled(_ providerID: String, enabled: Bool) {
+        AppPreferences.setSourceEnabled(enabled, sourceID: providerID)
+        if enabled == false, selectedTabID == providerID {
+            selectedTabID = "overview"
+        }
+        Task {
+            await refresh(trigger: .manual)
+        }
+    }
+
+    func isProviderEnabled(_ providerID: String) -> Bool {
+        providerPreferences.first(where: { $0.id == providerID })?.isEnabled ?? true
     }
 }

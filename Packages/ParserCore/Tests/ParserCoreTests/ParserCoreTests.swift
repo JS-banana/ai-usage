@@ -1,4 +1,5 @@
 import XCTest
+import Support
 @testable import ParserCore
 
 final class ParserCoreTests: XCTestCase {
@@ -11,6 +12,7 @@ final class ParserCoreTests: XCTestCase {
         XCTAssertEqual(result.events.map(\.totalTokens), [1700, 1200])
         XCTAssertEqual(result.events.map(\.cachedTokens), [200, 100])
         XCTAssertEqual(result.sessions.first?.totalTokens, 2900)
+        XCTAssertEqual(result.sessions.first?.requestCount, 2)
         XCTAssertEqual(result.diagnostics.count, 0)
     }
 
@@ -41,6 +43,7 @@ final class ParserCoreTests: XCTestCase {
         XCTAssertEqual(result.events.map(\.totalTokens), [1650, 875])
         XCTAssertEqual(result.events.map(\.cachedTokens), [50, 25])
         XCTAssertEqual(result.sessions.first?.totalTokens, 2525)
+        XCTAssertEqual(result.sessions.first?.requestCount, 2)
         XCTAssertEqual(result.sessions.first?.project, "project-a")
         XCTAssertEqual(result.diagnostics.count, 0)
     }
@@ -76,7 +79,9 @@ final class ParserCoreTests: XCTestCase {
         let result = parser.parse(files: [file])
         XCTAssertEqual(result.events.count, 1)
         XCTAssertEqual(result.sessions.count, 1)
-        XCTAssertEqual(result.events.first?.totalTokens, 900)
+        XCTAssertEqual(result.events.first?.totalTokens, 920)
+        XCTAssertEqual(result.events.first?.requestCount, 1)
+        XCTAssertEqual(result.sessions.first?.requestCount, 1)
     }
 
     func testGeminiParserParsesFixture() throws {
@@ -85,6 +90,28 @@ final class ParserCoreTests: XCTestCase {
         let result = parser.parse(files: [file])
         XCTAssertEqual(result.events.count, 2)
         XCTAssertEqual(result.sessions.first?.totalTokens, 2200)
+        XCTAssertEqual(result.sessions.first?.requestCount, 2)
+    }
+
+    func testGeminiParserCountsCachedTokensInTotal() throws {
+        let parser = GeminiParser()
+        let file = try makeTemporaryGeminiSessionFile(
+            contents: """
+            [{"timestamp":"2026-04-12T07:00:00Z","model":"gemini-2.5-pro","usage":{"inputTokens":100,"outputTokens":50,"cachedTokens":25}}]
+            """,
+            ext: "json"
+        )
+
+        let result = parser.parse(files: [file])
+
+        XCTAssertEqual(result.events.first?.cachedTokens, 25)
+        XCTAssertEqual(result.events.first?.totalTokens, 175)
+        XCTAssertEqual(result.sessions.first?.totalTokens, 175)
+    }
+
+    func testDateParsingSupportsFractionalAndPlainISO8601() {
+        XCTAssertNotNil(DateParsing.parseISO8601("2026-04-12T07:00:00.123Z"))
+        XCTAssertNotNil(DateParsing.parseISO8601("2026-04-12T07:00:00Z"))
     }
 
     func testStableIDsAreDeterministicWithinParserRun() throws {
@@ -110,6 +137,16 @@ final class ParserCoreTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fileURL = directory.appendingPathComponent("fixture.\(ext)")
+        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
+    }
+
+    private func makeTemporaryGeminiSessionFile(contents: String, ext: String) throws -> URL {
+        let chatsDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("chats", isDirectory: true)
+        try FileManager.default.createDirectory(at: chatsDirectory, withIntermediateDirectories: true)
+        let fileURL = chatsDirectory.appendingPathComponent("session.\(ext)")
         try contents.write(to: fileURL, atomically: true, encoding: .utf8)
         return fileURL
     }

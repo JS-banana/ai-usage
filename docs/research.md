@@ -1,4 +1,4 @@
-# AI Usage Local 深度研究与方案结论
+# AiUsage 深度研究与方案结论
 
 ## 1. 目标与约束
 
