@@ -4,12 +4,6 @@ import Ingestion
 import ProviderKit
 import Query
 
-struct ProviderTabItem: Identifiable, Sendable {
-    let id: String
-    let name: String
-    let status: SourceStatus
-}
-
 struct OverviewProviderRow: Identifiable, Sendable {
     let id: String
     let name: String
@@ -37,7 +31,7 @@ struct AppSnapshot: Sendable {
     let overview: OverviewPanelSnapshot
     let panelsByID: [String: ProviderPanelSnapshot]
     let lastRefresh: Date
-    var groupQuotaSummary: GroupQuotaSummarySnapshot = .unconfigured()
+    var entitlementSummariesByTarget: [String: EntitlementSummarySnapshot] = [:]
     var menuBarSummary: MenuBarSummarySnapshot = .init(
         title: "AiUsage",
         subtitle: "暂无数据",
@@ -86,7 +80,15 @@ struct AppReadModelService {
                 lastRefresh: now
             )
             return AppSnapshot(
-                providerTabs: [ProviderTabItem(id: "overview", name: "总览", status: .unavailable)],
+                providerTabs: [
+                    ProviderTabItem(
+                        id: "overview",
+                        name: "总览",
+                        status: .unavailable,
+                        branding: ProviderBrandCatalog.branding(for: "overview", fallbackName: "总览"),
+                        usageProgress: nil
+                    )
+                ],
                 providerPreferences: providerPreferences,
                 selectedTabID: "overview",
                 overview: overview,
@@ -150,13 +152,11 @@ struct AppReadModelService {
             )
         }
 
-        let providerTabs = [ProviderTabItem(id: "overview", name: "总览", status: .ready)] + descriptors.map { descriptor in
-            ProviderTabItem(
-                id: descriptor.id,
-                name: descriptor.displayName,
-                status: sourceHealth[descriptor.id]?.status ?? .unavailable
-            )
-        }
+        let providerTabs = makeProviderTabs(
+            descriptors: descriptors,
+            sourceHealth: sourceHealth,
+            panelsByID: panelsByID
+        )
 
         let todayMetrics = try await todaySummary.metrics
         let currentWeekMetrics = try await currentWeekSummary.metrics
@@ -231,6 +231,34 @@ struct AppReadModelService {
             return preferredTabID
         }
         return overview.todayTokens > 0 ? "overview" : (providerTabs.first(where: { ($0.id != "overview") && ((panelsByID[$0.id]?.todayTokens ?? 0) > 0) })?.id ?? "overview")
+    }
+
+    private func makeProviderTabs(
+        descriptors: [ProviderDescriptor],
+        sourceHealth: [String: SourceHealth],
+        panelsByID: [String: ProviderPanelSnapshot]
+    ) -> [ProviderTabItem] {
+        let maxRequests = max(1, descriptors.compactMap { panelsByID[$0.id]?.sevenDayRequests }.max() ?? 0)
+        let overviewTab = ProviderTabItem(
+            id: "overview",
+            name: "总览",
+            status: .ready,
+            branding: ProviderBrandCatalog.branding(for: "overview", fallbackName: "总览"),
+            usageProgress: nil
+        )
+
+        let providerTabs = descriptors.map { descriptor in
+            let weeklyRequests = panelsByID[descriptor.id]?.sevenDayRequests ?? 0
+            return ProviderTabItem(
+                id: descriptor.id,
+                name: descriptor.displayName,
+                status: sourceHealth[descriptor.id]?.status ?? .unavailable,
+                branding: ProviderBrandCatalog.branding(for: descriptor.id, fallbackName: descriptor.displayName),
+                usageProgress: Double(weeklyRequests) / Double(maxRequests)
+            )
+        }
+
+        return [overviewTab] + providerTabs
     }
 }
 

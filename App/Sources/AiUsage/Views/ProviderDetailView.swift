@@ -9,14 +9,13 @@ struct ProviderDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PanelDetailCard(title: "分组总额度") {
-                    QuotaSummarySection(summary: appState.groupQuotaSummary, title: "分组总额度", showsHeader: false)
+                if let entitlementSummary = displayedEntitlementSummary {
+                    PanelDetailCard(title: "套餐额度") {
+                        QuotaSummarySection(summary: entitlementSummary)
+                    }
                 }
 
                 if appState.selectedTabID == "overview", let overview = appState.overviewPanel {
-                    Text("总览详情")
-                        .font(.largeTitle.bold())
-
                     HStack(spacing: 16) {
                         DetailMetricCard(title: "今日", value: CompactNumberFormatting.fullString(overview.todayTokens))
                         DetailMetricCard(title: "本周", value: CompactNumberFormatting.fullString(overview.sevenDayTokens))
@@ -34,9 +33,6 @@ struct ProviderDetailView: View {
                         }
                     }
                 } else if let panel = appState.selectedPanel {
-                    Text(panel.name)
-                        .font(.largeTitle.bold())
-
                     HStack(spacing: 16) {
                         DetailMetricCard(title: "今日", value: CompactNumberFormatting.fullString(panel.todayTokens))
                         DetailMetricCard(title: "本周", value: CompactNumberFormatting.fullString(panel.sevenDayTokens))
@@ -72,6 +68,13 @@ struct ProviderDetailView: View {
             .padding(24)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var displayedEntitlementSummary: EntitlementSummarySnapshot? {
+        guard let summary = appState.activeEntitlementSummary, summary.status != .unconfigured else {
+            return nil
+        }
+        return summary
     }
 }
 

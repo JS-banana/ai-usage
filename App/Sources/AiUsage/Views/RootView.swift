@@ -11,16 +11,16 @@ struct RootView: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             providerTabs
-            if shouldShowQuotaSummary {
-                quotaSummaryCard
+            if let activeEntitlementSummary = displayedEntitlementSummary {
+                entitlementSummaryCard(activeEntitlementSummary)
             }
             summaryCard
-            actionList
+            actionToolbar
             statusRow
         }
-        .padding(12)
+        .padding(10)
         .frame(minWidth: 380, idealWidth: 400, maxWidth: 430, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -28,39 +28,18 @@ struct RootView: View {
     private var providerTabs: some View {
         HStack(spacing: 6) {
             ForEach(appState.providerTabs) { tab in
-                Button {
+                ProviderTabButton(tab: tab, isSelected: appState.selectedTabID == tab.id) {
                     appState.selectTab(tab.id)
-                } label: {
-                    VStack(spacing: 5) {
-                        HStack(spacing: 6) {
-                            Circle()
-                                .fill(color(for: tab.status))
-                                .frame(width: 6, height: 6)
-                            Text(tab.name)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                        }
-                        Capsule()
-                            .fill(appState.selectedTabID == tab.id ? Color.accentColor : Color.clear)
-                            .frame(height: 3)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(appState.selectedTabID == tab.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04))
-                    )
                 }
-                .buttonStyle(.plain)
             }
         }
     }
 
-    private var quotaSummaryCard: some View {
+    private func entitlementSummaryCard(_ summary: EntitlementSummarySnapshot) -> some View {
         PanelCard {
             VStack(alignment: .leading, spacing: 8) {
-                QuotaSummarySection(summary: appState.groupQuotaSummary, compact: true)
-                if appState.groupQuotaSummary.status == .failed {
+                QuotaSummarySection(summary: summary, compact: true)
+                if summary.status == .failed {
                     Button("重新配置额度") {
                         openSettings()
                     }
@@ -70,8 +49,11 @@ struct RootView: View {
         }
     }
 
-    private var shouldShowQuotaSummary: Bool {
-        appState.groupQuotaSummary.status != .unconfigured
+    private var displayedEntitlementSummary: EntitlementSummarySnapshot? {
+        guard let summary = appState.activeEntitlementSummary, summary.status != .unconfigured else {
+            return nil
+        }
+        return summary
     }
 
     private var summaryCard: some View {
@@ -87,55 +69,22 @@ struct RootView: View {
     }
 
     private var overviewSummary: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("总览")
-                        .font(.title3.bold())
-                    if let overview = appState.overviewPanel {
-                        Text("更新于 \(relativeRefreshText(overview.lastRefresh))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                if let overview = appState.overviewPanel {
-                    StatusPill(title: "\(overview.activeSources) 个来源", color: overview.activeSources > 0 ? .green : .gray)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 8) {
             if let overview = appState.overviewPanel {
+                Text("更新于 \(relativeRefreshText(overview.lastRefresh))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 CompactMetricGrid(items: [
-                    MetricGridItem(title: "今日 Tokens", value: fullValue(overview.todayTokens), note: nil),
-                    MetricGridItem(title: "今日请求", value: overview.todayRequests.formatted(), note: nil),
-                    MetricGridItem(title: "本周 Tokens", value: fullValue(overview.sevenDayTokens), note: nil),
-                    MetricGridItem(title: "今日 Cached", value: fullValue(overview.cachedTokens), note: nil)
+                    MetricGridItem(title: "今日 Tokens", value: fullValue(overview.todayTokens)),
+                    MetricGridItem(title: "今日请求", value: overview.todayRequests.formatted()),
+                    MetricGridItem(title: "本周 Tokens", value: fullValue(overview.sevenDayTokens)),
+                    MetricGridItem(title: "本周请求", value: overview.sevenDayRequests.formatted())
                 ])
 
                 if overview.trendPoints.isEmpty == false {
                     Divider()
-                    TrendContent(title: "近 7 天", points: overview.trendPoints, chartHeight: 70)
-                }
-
-                if overview.providerRows.isEmpty == false {
-                    Divider()
-                    VStack(spacing: 6) {
-                        ForEach(overview.providerRows.prefix(4)) { row in
-                            HStack {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(color(for: row.status))
-                                        .frame(width: 6, height: 6)
-                                    Text(row.name)
-                                        .font(.subheadline.weight(.medium))
-                                }
-                                Spacer()
-                                Text("\(row.todayRequests) 次 · \(fullValue(row.todayTokens))")
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                    TrendContent(title: "近 7 天", points: overview.trendPoints, chartHeight: 66)
                 }
             } else {
                 SectionEmptyState(title: "暂无总览数据", message: "启用来源并完成刷新后会显示统计。")
@@ -144,60 +93,52 @@ struct RootView: View {
     }
 
     private func providerSummary(_ panel: ProviderPanelSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(panel.name)
-                        .font(.title3.bold())
-                    Text(lastRefreshText(for: panel))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                StatusPill(title: statusLabel(for: panel.status), color: color(for: panel.status))
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text(lastRefreshText(for: panel))
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             CompactMetricGrid(items: [
-                MetricGridItem(title: "今日 Tokens", value: fullValue(panel.todayTokens), note: nil),
-                MetricGridItem(title: "今日请求", value: panel.todayRequests.formatted(), note: nil),
-                MetricGridItem(title: "本周 Tokens", value: fullValue(panel.sevenDayTokens), note: nil),
-                MetricGridItem(title: "已导入会话", value: panel.importedSessions.formatted(), note: nil)
+                MetricGridItem(title: "今日 Tokens", value: fullValue(panel.todayTokens)),
+                MetricGridItem(title: "今日请求", value: panel.todayRequests.formatted()),
+                MetricGridItem(title: "本周 Tokens", value: fullValue(panel.sevenDayTokens)),
+                MetricGridItem(title: "本周请求", value: panel.sevenDayRequests.formatted())
             ])
 
             if panel.trendPoints.isEmpty == false {
                 Divider()
-                TrendContent(title: "近 7 天", points: panel.trendPoints, chartHeight: 70)
+                TrendContent(title: "近 7 天", points: panel.trendPoints, chartHeight: 66)
             }
 
             Text(panel.message)
-                .font(.caption)
+                .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
     }
 
-    private var actionList: some View {
+    private var actionToolbar: some View {
         PanelCard {
-            VStack(spacing: 0) {
-                ActionRow(title: appState.isLoading ? "刷新中…" : "刷新", systemImage: "arrow.clockwise") {
+            HStack(spacing: 8) {
+                CompactActionButton(title: appState.isLoading ? "刷新中…" : "刷新", systemImage: "arrow.clockwise") {
                     Task { await appState.refresh() }
                 }
-                Divider().padding(.leading, 30)
-                ActionRow(title: "添加 / 管理账号", systemImage: "person.crop.circle.badge.plus") {
+                CompactActionButton(title: "管理账号", systemImage: "person.crop.circle.badge.plus") {
                     openSettings()
                 }
-                Divider().padding(.leading, 30)
-                ActionRow(title: "Usage Dashboard", systemImage: "rectangle.grid.2x2") {
+                CompactActionButton(title: "Quota Targets", systemImage: "slider.horizontal.3") {
+                    openSettings()
+                }
+                CompactActionButton(title: "Dashboard", systemImage: "rectangle.grid.2x2") {
                     openWindow(id: "detail")
                 }
-                Divider().padding(.leading, 30)
-                ActionRow(title: "关于 AiUsage", systemImage: "info.circle") {
+                CompactActionButton(title: "关于 AiUsage", systemImage: "info.circle") {
                     showAbout()
                 }
-                Divider().padding(.leading, 30)
-                ActionRow(title: "退出", systemImage: "xmark.circle") {
+                CompactActionButton(title: "退出", systemImage: "xmark.circle") {
                     NSApplication.shared.terminate(nil)
                 }
+                Spacer(minLength: 0)
             }
         }
     }
@@ -207,22 +148,6 @@ struct RootView: View {
             .font(.caption)
             .foregroundStyle(statusColor)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func statusLabel(for status: SourceStatus) -> String {
-        switch status {
-        case .ready: "正常"
-        case .warning: "提醒"
-        case .unavailable: "不可用"
-        }
-    }
-
-    private func color(for status: SourceStatus) -> Color {
-        switch status {
-        case .ready: .green
-        case .warning: .orange
-        case .unavailable: .gray
-        }
     }
 
     private var statusColor: Color {
@@ -263,34 +188,152 @@ private struct PanelCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             content
         }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
         }
     }
 }
 
-private struct ActionRow: View {
-    let title: String
-    let systemImage: String
+private struct ProviderTabButton: View {
+    let tab: ProviderTabItem
+    let isSelected: Bool
     let action: () -> Void
+
+    private var accentColor: Color {
+        tab.branding.accentColor.tintColor
+    }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .frame(width: 16)
-                    .foregroundStyle(.secondary)
-                Text(title)
-                    .font(.subheadline)
-                Spacer()
+            VStack(spacing: 7) {
+                ProviderTabLogoView(branding: tab.branding, accentColor: accentColor)
+                    .frame(width: 18, height: 18)
+                    .frame(maxWidth: .infinity, minHeight: 20)
+                ProviderTabMiniProgress(
+                    progress: tab.usageProgress,
+                    accentColor: accentColor,
+                    status: tab.status
+                )
             }
-            .contentShape(Rectangle())
-            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? accentColor.opacity(0.16) : Color.primary.opacity(0.03))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isSelected ? accentColor.opacity(0.24) : Color.clear, lineWidth: 1)
+            }
+            .opacity(tab.status.tabOpacity)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(tab.name))
+    }
+}
+
+private struct ProviderTabLogoView: View {
+    let branding: ProviderTabBranding
+    let accentColor: Color
+
+    var body: some View {
+        Group {
+            if let resourceImage = ProviderBrandIcon.image(for: branding) {
+                Image(nsImage: resourceImage)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(accentColor)
+            } else {
+                switch branding.fallbackIcon {
+                case .symbol(let systemName):
+                    Image(systemName: systemName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(accentColor)
+                case .monogram(let value):
+                    Text(value)
+                        .font(.system(size: value.count > 1 ? 10 : 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(accentColor)
+                        .minimumScaleFactor(0.6)
+                }
+            }
+        }
+    }
+}
+
+private struct ProviderTabMiniProgress: View {
+    let progress: Double?
+    let accentColor: Color
+    let status: SourceStatus
+
+    var body: some View {
+        GeometryReader { geometry in
+            let ratio = progress.map { min(max($0, 0), 1) }
+            let fillWidth = fillWidth(for: geometry.size.width, progress: ratio)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.08))
+                Capsule()
+                    .fill(accentColor.opacity(status.progressOpacity))
+                    .frame(width: fillWidth)
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private func fillWidth(for totalWidth: CGFloat, progress: Double?) -> CGFloat {
+        if let progress {
+            return totalWidth * progress
+        }
+        return 0
+    }
+}
+
+private struct CompactActionButton: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(isHovered ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(Text(title))
+        .overlay(alignment: .top) {
+            if isHovered {
+                Text(title)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay {
+                        Capsule()
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                    }
+                    .offset(y: -30)
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+        }
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
@@ -316,16 +359,15 @@ private struct MetricGridItem: Identifiable {
     let id = UUID()
     let title: String
     let value: String
-    let note: String?
 }
 
 private struct CompactMetricGrid: View {
     let items: [MetricGridItem]
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
             ForEach(items) { item in
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -335,25 +377,11 @@ private struct CompactMetricGrid: View {
                         .minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
         }
-    }
-}
-
-private struct StatusPill: View {
-    let title: String
-    let color: Color
-
-    var body: some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(color.opacity(0.15), in: Capsule())
-            .foregroundStyle(color)
     }
 }
 
@@ -383,7 +411,7 @@ struct TrendContent: View {
     @State private var hoveredPoint: BucketPoint?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .trailing) {
                 HStack {
                     Text(title)
@@ -399,7 +427,7 @@ struct TrendContent: View {
                     )
                 }
             }
-            .frame(height: 28)
+            .frame(height: 24)
 
             Chart {
                 ForEach(points) { point in
@@ -409,7 +437,7 @@ struct TrendContent: View {
                     )
                     .foregroundStyle(Color.accentColor.gradient)
                     .opacity(hoveredPoint == nil || hoveredPoint?.id == point.id ? 1 : 0.45)
-                    .cornerRadius(5)
+                    .cornerRadius(4)
 
                     if hoveredPoint?.id == point.id {
                         RuleMark(x: .value("日期", point.label))
@@ -468,6 +496,36 @@ struct MiniMetricRow: View {
             Spacer()
             Text(value)
                 .font(.subheadline.monospacedDigit())
+        }
+    }
+}
+
+private extension ProviderBrandColor {
+    var tintColor: Color {
+        Color(red: self.red, green: self.green, blue: self.blue)
+    }
+}
+
+private extension SourceStatus {
+    var tabOpacity: Double {
+        switch self {
+        case .ready:
+            return 1
+        case .warning:
+            return 0.82
+        case .unavailable:
+            return 0.52
+        }
+    }
+
+    var progressOpacity: Double {
+        switch self {
+        case .ready:
+            return 0.95
+        case .warning:
+            return 0.72
+        case .unavailable:
+            return 0.35
         }
     }
 }

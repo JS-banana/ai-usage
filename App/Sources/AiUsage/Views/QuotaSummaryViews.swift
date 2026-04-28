@@ -1,53 +1,53 @@
 import SwiftUI
 
+enum QuotaProgressRiskLevel: String, Sendable {
+    case green
+    case yellow
+    case orange
+    case red
+
+    static func forProgress(_ progress: Double?) -> QuotaProgressRiskLevel {
+        let ratio = min(max(progress ?? 0, 0), 1)
+        switch ratio {
+        case ..<0.35:
+            return .green
+        case ..<0.60:
+            return .yellow
+        case ..<0.80:
+            return .orange
+        default:
+            return .red
+        }
+    }
+}
+
 struct QuotaSummarySection: View {
-    let summary: GroupQuotaSummarySnapshot
-    var title: String = "分组额度"
-    var showsHeader: Bool = true
+    let summary: EntitlementSummarySnapshot
     var compact: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
-            if showsHeader {
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(summary.groupName)
-                            .font(compact ? .subheadline.weight(.semibold) : .headline)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                    StatusBadge(title: statusTitle)
-                }
-            }
-
             if summary.status == .failed {
-                Text("Quota 暂不可用，稍后重试")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("套餐额度暂不可用")
+                        .font(.subheadline.weight(.semibold))
+                    Text(summary.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             } else {
                 HStack(spacing: 8) {
-                    CompactQuotaWindowCard(window: summary.fiveHour, compact: compact)
-                    CompactQuotaWindowCard(window: summary.weekly, compact: compact)
+                    CompactQuotaWindowCard(window: summary.primaryWindow, compact: compact)
+                    CompactQuotaWindowCard(window: summary.secondaryWindow, compact: compact)
                 }
             }
-        }
-    }
-
-    private var statusTitle: String {
-        switch summary.status {
-        case .ready: return "已配置"
-        case .stale: return "偏旧"
-        case .failed: return "失败"
-        case .unconfigured: return "未配置"
         }
     }
 }
 
 private struct CompactQuotaWindowCard: View {
-    let window: GroupQuotaWindowSnapshot
+    let window: EntitlementWindowSnapshot
     let compact: Bool
 
     var body: some View {
@@ -56,24 +56,22 @@ private struct CompactQuotaWindowCard: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            if compact == false {
-                Text(window.footnoteText)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-            }
-
             QuotaProgressTrack(progress: window.progress, compact: compact)
 
             Text(window.primaryText)
                 .font(compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+
+            Text(window.footnoteText)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, compact ? 10 : 12)
         .padding(.vertical, compact ? 8 : 10)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.primary.opacity(compact ? 0.04 : 0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -83,24 +81,13 @@ private struct QuotaProgressTrack: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let ratio = min(max(progress ?? 0.18, 0.18), 1)
+            let ratio = min(max(progress ?? 0, 0), 1)
+            let riskLevel = QuotaProgressRiskLevel.forProgress(progress)
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.primary.opacity(0.08), Color.primary.opacity(0.04)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .fill(Color.primary.opacity(0.08))
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.65)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .fill(riskLevel.color)
                     .frame(width: geometry.size.width * ratio)
             }
         }
@@ -108,15 +95,17 @@ private struct QuotaProgressTrack: View {
     }
 }
 
-private struct StatusBadge: View {
-    let title: String
-
-    var body: some View {
-        Text(title)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.06), in: Capsule())
-            .foregroundStyle(.secondary)
+private extension QuotaProgressRiskLevel {
+    var color: Color {
+        switch self {
+        case .green:
+            return .green
+        case .yellow:
+            return .yellow
+        case .orange:
+            return .orange
+        case .red:
+            return .red
+        }
     }
 }

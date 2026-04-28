@@ -26,15 +26,27 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertTrue(image.isTemplate)
     }
 
-    func testRootViewSourceShowsCompactManagementEntry() throws {
+    func testRootViewSourceShowsActiveEntitlementAndCompactActions() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
-        XCTAssertTrue(source.contains("actionList"))
-        XCTAssertTrue(source.contains("添加 / 管理账号"))
+        XCTAssertTrue(source.contains("displayedEntitlementSummary"))
+        XCTAssertTrue(source.contains("entitlementSummaryCard(activeEntitlementSummary)"))
+        XCTAssertTrue(source.contains("summary.status != .unconfigured"))
+        XCTAssertTrue(source.contains("actionToolbar"))
+        XCTAssertTrue(source.contains("CompactActionButton"))
+        XCTAssertTrue(source.contains("管理账号"))
         XCTAssertTrue(source.contains("关于 AiUsage"))
-        XCTAssertTrue(source.contains("TrendContent(title: \"近 7 天\""))
-        XCTAssertTrue(source.contains("selectedTabID == \"overview\""))
-        XCTAssertTrue(source.contains("onContinuousHover"))
-        XCTAssertFalse(source.contains("accountSummaries"))
+        XCTAssertTrue(source.contains("退出"))
+        XCTAssertTrue(source.contains(".help(title)"))
+        XCTAssertTrue(source.contains(".onHover"))
+        XCTAssertTrue(source.contains("if isHovered"))
+        XCTAssertTrue(source.contains(".fixedSize()"))
+        XCTAssertTrue(source.contains("ProviderTabButton(tab: tab"))
+        XCTAssertTrue(source.contains("ProviderTabMiniProgress"))
+        XCTAssertFalse(source.contains("actionList"))
+        XCTAssertFalse(source.contains("ActionRow"))
+        XCTAssertFalse(source.contains("appState.groupQuotaSummary"))
+        XCTAssertFalse(source.contains("ellipsis.circle"))
+        XCTAssertFalse(source.contains("font(.caption.weight(.medium))"))
     }
 
     func testAppShellUsesRenderedTemplateImageForMenuBarExtra() throws {
@@ -44,22 +56,44 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertFalse(source.contains("chart.bar.xaxis"))
     }
 
-    func testSettingsSourceIncludesProviderVisibilityToggles() throws {
+    func testSettingsSourceIncludesTargetScopedEntitlementSections() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/SettingsView.swift")
         XCTAssertTrue(source.contains("账号与来源"))
-        XCTAssertTrue(source.contains("Toggle("))
-        XCTAssertTrue(source.contains("你可以决定展示哪些 agent / account 的 usage 统计"))
+        XCTAssertTrue(source.contains("EntitlementPreferences.descriptorTargets"))
+        XCTAssertTrue(source.contains("Picker(\"来源\""))
+        XCTAssertTrue(source.contains("总览套餐额度"))
         XCTAssertTrue(source.contains("Quota URL"))
-        XCTAssertTrue(source.contains("Quota 总额度预览"))
+        XCTAssertFalse(source.contains("Quota 服务"))
         XCTAssertFalse(source.contains("Group ID"))
-        XCTAssertFalse(source.contains("ForEach(appState.accountSummaries)"))
     }
 
-    func testReadModelServiceDoesNotHardcodeProviderNameSwitches() throws {
-        let source = try sourceText(path: "App/Sources/AiUsage/Services/AppReadModelService.swift")
-        XCTAssertTrue(source.contains("providerDescriptors()"))
-        XCTAssertFalse(source.contains("shortProviderName"))
-        XCTAssertFalse(source.contains("switch descriptor.id"))
+    func testQuotaSummarySourceKeepsTwoWindowCompactCards() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaSummaryViews.swift")
+        XCTAssertTrue(source.contains("QuotaProgressRiskLevel"))
+        XCTAssertTrue(source.contains("CompactQuotaWindowCard(window: summary.primaryWindow"))
+        XCTAssertTrue(source.contains("CompactQuotaWindowCard(window: summary.secondaryWindow"))
+        XCTAssertFalse(source.contains("summary.fiveHour"))
+        XCTAssertFalse(source.contains("summary.weekly"))
+        XCTAssertFalse(source.contains("Text(summary.title)"))
+        XCTAssertFalse(source.contains("window.secondaryText"))
+    }
+
+    func testBrandCatalogSourceProvidesKnownProviderMappings() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Models/ProviderBrandCatalog.swift")
+        XCTAssertTrue(source.contains("case \"claude-code\""))
+        XCTAssertTrue(source.contains("case \"codex\""))
+        XCTAssertTrue(source.contains("case \"opencode\""))
+        XCTAssertTrue(source.contains("case \"gemini\""))
+        XCTAssertTrue(source.contains("case \"antigravity\""))
+        XCTAssertTrue(source.contains("case \"overview\""))
+    }
+
+    func testProviderDetailViewShowsActiveEntitlementCard() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/ProviderDetailView.swift")
+        XCTAssertTrue(source.contains("displayedEntitlementSummary"))
+        XCTAssertTrue(source.contains("PanelDetailCard(title: \"套餐额度\")"))
+        XCTAssertTrue(source.contains("summary.status != .unconfigured"))
+        XCTAssertFalse(source.contains("appState.groupQuotaSummary"))
     }
 
     private func sourceText(path: String) throws -> String {

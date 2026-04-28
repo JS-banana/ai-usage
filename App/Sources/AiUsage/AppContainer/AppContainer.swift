@@ -27,8 +27,11 @@ struct AppContainer {
             dataService: AppDataService(
                 importCoordinator: importCoordinator,
                 readModelService: readModelService,
-                quotaService: LaifuyouQuotaService(),
-                groupQuotaSummaryReadModelService: GroupQuotaSummaryReadModelService(),
+                entitlementService: EntitlementResolutionService(
+                    thirdPartyService: LaifuyouQuotaService(),
+                    officialProbe: OfficialEntitlementProbe(),
+                    userDefaults: .standard
+                ),
                 menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
             )
         )

@@ -23,43 +23,76 @@ struct MenuBarSummarySnapshot: Hashable, Sendable {
 
 struct MenuBarSummaryReadModelService {
     func makeSummary(
+        activeTargetID: String?,
         overview: OverviewPanelSnapshot?,
-        groupQuotaSummary: GroupQuotaSummarySnapshot
+        entitlementsByTarget: [String: EntitlementSummarySnapshot]
     ) -> MenuBarSummarySnapshot {
-        guard let overview else {
+        let targetID = activeTargetID ?? EntitlementTargetID.overview.storageKey
+        guard let summary = entitlementsByTarget[targetID] else {
             return MenuBarSummarySnapshot(
                 title: "AiUsage",
                 subtitle: "暂无数据",
                 status: .empty,
-                glyph: glyph(for: groupQuotaSummary)
+                glyph: .empty
             )
         }
 
-        let status: MenuBarSummarySnapshot.Status
-        switch groupQuotaSummary.status {
-        case .stale:
-            status = .stale
-        case .ready, .failed, .unconfigured:
-            status = .ready
-        }
-
+        let subtitle = makeSubtitle(for: summary, targetID: targetID, overview: overview)
+        let status: MenuBarSummarySnapshot.Status = summary.status == .stale ? .stale : (summary.status == .ready ? .ready : .empty)
         return MenuBarSummarySnapshot(
             title: "AiUsage",
-            subtitle: "请求 \(overview.todayRequests.formatted()) · Tokens \(overview.todayTokens.formatted())",
+            subtitle: subtitle,
             status: status,
-            glyph: glyph(for: groupQuotaSummary)
+            glyph: glyph(for: summary)
         )
     }
 
-    private func glyph(for summary: GroupQuotaSummarySnapshot) -> QuotaMenuBarGlyphState {
+    private func makeSubtitle(
+        for summary: EntitlementSummarySnapshot,
+        targetID: String,
+        overview: OverviewPanelSnapshot?
+    ) -> String {
+        if targetID == EntitlementTargetID.overview.storageKey {
+            if summary.isDerived, let derivedFromTitle = summary.derivedFromTitle {
+                return "总览 · 兜底 \(derivedFromTitle)"
+            }
+            switch summary.status {
+            case .ready, .stale:
+                return "总览 · \(summary.primaryWindow.primaryText)"
+            case .failed:
+                return "总览 · 刷新失败"
+            case .configuredNonlive:
+                return "总览 · 官方来源待接入"
+            case .unconfigured:
+                return overview == nil ? "总览 · 暂无数据" : "总览 · 未配置套餐来源"
+            case .unavailable:
+                return "总览 · 来源暂不可用"
+            }
+        }
+
+        switch summary.status {
+        case .ready, .stale:
+            return "\(summary.title) · \(summary.primaryWindow.primaryText)"
+        case .failed:
+            return "\(summary.title) · 刷新失败"
+        case .configuredNonlive:
+            return "\(summary.title) · 官方来源待接入"
+        case .unconfigured:
+            return "\(summary.title) · 未配置套餐来源"
+        case .unavailable:
+            return "\(summary.title) · 来源暂不可用"
+        }
+    }
+
+    private func glyph(for summary: EntitlementSummarySnapshot) -> QuotaMenuBarGlyphState {
         switch summary.status {
         case .ready, .stale:
             return QuotaMenuBarGlyphState(
-                leftRatio: summary.fiveHour.progress ?? 0.18,
-                rightRatio: summary.weekly.progress ?? 0.18,
+                leftRatio: summary.primaryWindow.progress ?? 0.18,
+                rightRatio: summary.secondaryWindow.progress ?? 0.18,
                 isDimmed: false
             )
-        case .unconfigured, .failed:
+        case .failed, .configuredNonlive, .unconfigured, .unavailable:
             return .empty
         }
     }

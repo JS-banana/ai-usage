@@ -10,7 +10,7 @@ struct LaifuyouQuotaConfiguration {
     let apiKey: String
     let endpointURL: URL
 
-    static func current(userDefaults: UserDefaults = .standard) -> LaifuyouQuotaConfiguration? {
+    static func legacyCurrent(userDefaults: UserDefaults = .standard) -> LaifuyouQuotaConfiguration? {
         let apiKey = (userDefaults.string(forKey: apiKeyDefaultsKey) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard apiKey.isEmpty == false else { return nil }
@@ -50,33 +50,12 @@ struct LaifuyouQuotaConfiguration {
     }
 }
 
-struct LaifuyouQuotaWindowPayload: Sendable {
-    let id: String
-    let title: String
-    let used: Double
-    let limit: Double?
-    let remaining: Double?
-    let nextResetAt: Date?
-    let progress: Double?
-}
-
-struct LaifuyouQuotaPayload: Sendable {
-    let groupID: Int
-    let groupName: String
-    let updatedAt: Date
-    let isStale: Bool
-    let fiveHour: LaifuyouQuotaWindowPayload
-    let weekly: LaifuyouQuotaWindowPayload
-}
-
 actor LaifuyouQuotaService {
     private let session: URLSession
     private let decoder: JSONDecoder
-    private let userDefaults: UserDefaults
 
-    init(session: URLSession = .shared, userDefaults: UserDefaults = .standard) {
+    init(session: URLSession = .shared) {
         self.session = session
-        self.userDefaults = userDefaults
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -89,16 +68,17 @@ actor LaifuyouQuotaService {
         self.decoder = decoder
     }
 
-    func fetchIfConfigured(now: Date = Date()) async throws -> LaifuyouQuotaPayload? {
-        guard let configuration = LaifuyouQuotaConfiguration.current(userDefaults: userDefaults) else {
-            return nil
-        }
-
+    func fetch(
+        configuration: BridgeEntitlementConfiguration,
+        targetID: EntitlementTargetID,
+        title: String,
+        now: Date = Date()
+    ) async throws -> EntitlementSummarySnapshot {
         let response = try await fetchSummary(configuration: configuration)
-        return mapResponse(response, now: now)
+        return mapResponse(response, targetID: targetID, title: title, now: now)
     }
 
-    private func fetchSummary(configuration: LaifuyouQuotaConfiguration) async throws -> LaifuyouQuotaSummaryResponse {
+    private func fetchSummary(configuration: BridgeEntitlementConfiguration) async throws -> LaifuyouQuotaSummaryResponse {
         guard configuration.endpointURL.scheme?.isEmpty == false else {
             throw URLError(.badURL)
         }
@@ -118,28 +98,64 @@ actor LaifuyouQuotaService {
         return try decoder.decode(LaifuyouQuotaSummaryResponse.self, from: data)
     }
 
-    private func mapResponse(_ response: LaifuyouQuotaSummaryResponse, now: Date) -> LaifuyouQuotaPayload {
-        LaifuyouQuotaPayload(
-            groupID: response.groupID,
-            groupName: response.group.name,
+    private func mapResponse(
+        _ response: LaifuyouQuotaSummaryResponse,
+        targetID: EntitlementTargetID,
+        title: String,
+        now: Date
+    ) -> EntitlementSummarySnapshot {
+        let isStale = now.timeIntervalSince(response.updatedAt) > 1800
+        return EntitlementSummarySnapshot(
+            targetID: targetID,
+            title: title,
+            message: isStale ? "第三方套餐额度数据偏旧。" : "第三方套餐额度已更新。",
             updatedAt: response.updatedAt,
-            isStale: now.timeIntervalSince(response.updatedAt) > 1800,
-            fiveHour: makeWindowPayload(id: "quota-5h", title: "5h", window: response.quota5h),
-            weekly: makeWindowPayload(id: "quota-7d", title: "周", window: response.quota7d)
+            status: isStale ? .stale : .ready,
+            sourceKind: .thirdParty,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: makeWindowSnapshot(id: "\(targetID.storageKey)-5h", title: "5h", window: response.quota5h, resetLabel: response.quota5h.nextResetAt),
+            secondaryWindow: makeWindowSnapshot(id: "\(targetID.storageKey)-7d", title: "7d", window: response.quota7d, resetLabel: response.quota7d.nextResetAt)
         )
     }
 
-    private func makeWindowPayload(id: String, title: String, window: LaifuyouQuotaSummaryResponse.QuotaWindow) -> LaifuyouQuotaWindowPayload {
+    private func makeWindowSnapshot(
+        id: String,
+        title: String,
+        window: LaifuyouQuotaSummaryResponse.QuotaWindow,
+        resetLabel: Date?
+    ) -> EntitlementWindowSnapshot {
         let progress = window.capacityUnits > 0 ? min(max(window.usedUnits / window.capacityUnits, 0), 1) : nil
-        return LaifuyouQuotaWindowPayload(
+        return EntitlementWindowSnapshot(
             id: id,
             title: title,
-            used: window.usedUnits,
-            limit: window.capacityUnits,
-            remaining: window.remainingUnits,
-            nextResetAt: window.nextResetAt,
+            primaryText: percentageText(progress),
+            secondaryText: usageText(used: window.usedUnits, limit: window.capacityUnits),
+            footnoteText: resetText(resetLabel),
             progress: progress
         )
+    }
+
+    private func resetText(_ date: Date?) -> String {
+        guard let date else { return "重置时间待定" }
+        return "重置 \(date.formatted(date: .numeric, time: .shortened))"
+    }
+
+    private func format(_ value: Double) -> String {
+        if abs(value.rounded() - value) < 0.001 {
+            return Int(value.rounded()).formatted()
+        }
+        return value.formatted(.number.precision(.fractionLength(1)))
+    }
+
+    private func percentageText(_ progress: Double?) -> String {
+        guard let progress else { return "已用 —" }
+        return "已用 \(min(max(progress, 0), 1).formatted(.percent.precision(.fractionLength(0))))"
+    }
+
+    private func usageText(used: Double, limit: Double?) -> String {
+        guard let limit else { return "已用 \(format(used))" }
+        return "\(format(used)) / \(format(limit))"
     }
 }
 

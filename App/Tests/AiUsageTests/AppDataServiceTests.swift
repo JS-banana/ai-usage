@@ -4,21 +4,21 @@ import Query
 @testable import AiUsage
 
 final class AppDataServiceTests: XCTestCase {
-    func testQuotaFailureDoesNotBreakUsageSnapshot() async throws {
+    func testResolvedActiveEntitlementFeedsStatusAndMenuBarSummary() async throws {
         let service = AppDataService(
             importCoordinator: ImportRunnerStub(),
             readModelService: SnapshotReaderStub(),
-            quotaService: QuotaFetcherStub(error: QuotaServiceError.httpStatus(503)),
-            groupQuotaSummaryReadModelService: GroupQuotaSummaryReadModelService(),
+            entitlementService: EntitlementResolverStub(),
             menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
         )
 
         let snapshot = try await service.refreshAll(trigger: .manual, preferredTabID: nil)
 
         XCTAssertEqual(snapshot.overview.todayRequests, 6)
-        XCTAssertEqual(snapshot.groupQuotaSummary.status, .failed)
-        XCTAssertTrue(snapshot.statusMessage.contains("Quota 刷新失败"))
-        XCTAssertTrue(snapshot.menuBarSummary.subtitle.contains("请求 6"))
+        XCTAssertEqual(snapshot.entitlementSummariesByTarget[EntitlementTargetID.overview.storageKey]?.status, .ready)
+        XCTAssertTrue(snapshot.statusMessage.contains("第三方套餐额度已更新"))
+        XCTAssertTrue(snapshot.menuBarSummary.subtitle.contains("总览"))
+        XCTAssertEqual(snapshot.menuBarSummary.glyph.leftRatio, 0.2, accuracy: 0.001)
     }
 }
 
@@ -34,9 +34,17 @@ private struct ImportRunnerStub: ImportRunning {
 private struct SnapshotReaderStub: AppSnapshotReading {
     func makeSnapshot(preferredTabID: String?) async throws -> AppSnapshot {
         AppSnapshot(
-            providerTabs: [ProviderTabItem(id: "overview", name: "总览", status: .ready)],
-            providerPreferences: [ProviderPreferenceSnapshot(id: "claude-code", name: "Claude", subtitle: "可显示 usage，并支持分组额度配置", supportsQuota: true, isEnabled: true)],
-            selectedTabID: "overview",
+            providerTabs: [
+                ProviderTabItem(
+                    id: EntitlementTargetID.overview.storageKey,
+                    name: "总览",
+                    status: .ready,
+                    branding: ProviderBrandCatalog.branding(for: "overview", fallbackName: "总览"),
+                    usageProgress: nil
+                )
+            ],
+            providerPreferences: [ProviderPreferenceSnapshot(id: "claude-code", name: "Claude", subtitle: "控制该来源是否显示在 usage 统计中", isEnabled: true)],
+            selectedTabID: EntitlementTargetID.overview.storageKey,
             overview: OverviewPanelSnapshot(
                 todayTokens: 1200,
                 sevenDayTokens: 4800,
@@ -55,17 +63,25 @@ private struct SnapshotReaderStub: AppSnapshotReading {
     }
 }
 
-private struct QuotaFetcherStub: GroupQuotaFetching {
-    let payload: LaifuyouQuotaPayload?
-    let error: (any Error)?
-
-    init(payload: LaifuyouQuotaPayload? = nil, error: (any Error)? = nil) {
-        self.payload = payload
-        self.error = error
-    }
-
-    func fetchIfConfigured(now: Date) async throws -> LaifuyouQuotaPayload? {
-        if let error { throw error }
-        return payload
+private struct EntitlementResolverStub: EntitlementResolving {
+    func resolveSummaries(
+        descriptors: [EntitlementTargetDescriptor],
+        visibleProviderIDs: Set<String>,
+        now: Date
+    ) async -> [String: EntitlementSummarySnapshot] {
+        [
+            EntitlementTargetID.overview.storageKey: EntitlementSummarySnapshot(
+                targetID: .overview,
+                title: "总览套餐",
+                message: "第三方套餐额度已更新。",
+                updatedAt: now,
+                status: .ready,
+                sourceKind: .thirdParty,
+                provenance: .explicit,
+                derivedFromTitle: nil,
+                primaryWindow: .init(id: "overview-5h", title: "5h", primaryText: "已用 20%", secondaryText: "1 / 5", footnoteText: "重置 soon", progress: 0.2),
+                secondaryWindow: .init(id: "overview-7d", title: "7d", primaryText: "已用 40%", secondaryText: "2 / 5", footnoteText: "重置 later", progress: 0.4)
+            )
+        ]
     }
 }

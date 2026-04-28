@@ -5,7 +5,6 @@ struct ProviderPreferenceSnapshot: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let subtitle: String
-    let supportsQuota: Bool
     let isEnabled: Bool
 }
 
@@ -29,10 +28,7 @@ enum AppPreferences {
         ProviderPreferenceSnapshot(
             id: descriptor.id,
             name: descriptor.displayName,
-            subtitle: descriptor.capabilities.contains(.accountQuotaSnapshots)
-                ? "可显示 usage，并支持分组额度配置"
-                : "仅显示本地 usage 统计",
-            supportsQuota: descriptor.capabilities.contains(.accountQuotaSnapshots),
+            subtitle: "控制该来源是否显示在 usage 统计中",
             isEnabled: isSourceEnabled(descriptor.id, userDefaults: userDefaults)
         )
     }
