@@ -4,6 +4,7 @@ set -euo pipefail
 APP_NAME="AiUsage"
 BUNDLE_ID="com.jsbanana.aiusage"
 VERSION="0.1.0"
+BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
 BUILD_CONFIGURATION="release"
 
 INSTALL_APP=false
@@ -74,7 +75,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
   <key>CFBundleShortVersionString</key>
   <string>$VERSION</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>

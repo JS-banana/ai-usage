@@ -1,0 +1,137 @@
+name: Release
+
+# NOTE: Workflow changes are validated via script checks and YAML parsing.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'master'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TOKEN: ${{ secrets.TOKEN != '' && secrets.TOKEN || github.token }}
+    outputs:
+      tag_name: ${{ steps.tag.outputs.tag_name }}
+      version: ${{ steps.next.outputs.next_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ env.RELEASE_TOKEN }}
+          ref: master
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Read versions
+        id: versions
+        run: |
+          BUILD_VERSION=$(node --input-type=module -e "import fs from 'node:fs'; const text=fs.readFileSync('build.sh','utf8'); const match=text.match(/^VERSION=\"([^\"]+)\"/m); if(!match) throw new Error('VERSION line not found in build.sh'); console.log(match[1])")
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          echo "build_version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve next version
+        id: next
+        run: |
+          NEXT_VERSION=$(node scripts/ci/next-version.mjs "${{ steps.versions.outputs.build_version }}" "${{ steps.versions.outputs.latest_tag }}")
+          echo "next_version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $NEXT_VERSION"
+
+      - name: Update build.sh version (if needed)
+        run: |
+          NEXT_VERSION="${{ steps.next.outputs.next_version }}"
+          CURRENT_VERSION="${{ steps.versions.outputs.build_version }}"
+
+          if [ "$CURRENT_VERSION" = "$NEXT_VERSION" ]; then
+            echo "build.sh already on $NEXT_VERSION"
+            exit 0
+          fi
+
+          NEXT_VERSION="$NEXT_VERSION" node --input-type=module -e "import fs from 'node:fs'; const path='build.sh'; const next=process.env.NEXT_VERSION; let text=fs.readFileSync(path,'utf8'); if(!/^VERSION=\"[^\"]+\"/m.test(text)) throw new Error('VERSION line not found in build.sh'); text=text.replace(/^VERSION=\"[^\"]+\"/m, \`VERSION=\"\${next}\"\`); fs.writeFileSync(path, text);"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build.sh
+          git commit \
+            -m "Keep release metadata aligned with the generated tag" \
+            -m "The release workflow builds the macOS app directly from build.sh, so the script version needs to move before the tag is created. This keeps the packaged app metadata consistent with the Git release version." \
+            -m $'Constraint: The app version currently lives in build.sh rather than a dedicated manifest\nConfidence: high\nScope-risk: narrow\nDirective: If the release version source changes, update this workflow and scripts/ci/next-version.mjs together\nTested: GitHub Actions release workflow\nNot-tested: Local execution outside GitHub Actions'
+          git push origin HEAD:master
+
+      - name: Create and push tag
+        id: tag
+        run: |
+          TAG="v${{ steps.next.outputs.next_version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build macOS Release
+    needs: [tag]
+    if: needs.tag.outputs.tag_name != ''
+    runs-on: macos-latest
+    env:
+      RELEASE_TOKEN: ${{ secrets.TOKEN != '' && secrets.TOKEN || github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.tag.outputs.tag_name }}
+
+      - name: Verify Swift toolchain
+        run: swift --version
+
+      - name: Build app bundle
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Verify app bundle
+        run: test -d "dist/AiUsage.app"
+
+      - name: Archive app bundle
+        id: package
+        run: |
+          VERSION="${{ needs.tag.outputs.version }}"
+          ASSET_NAME="AiUsage-macOS-${VERSION}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "dist/AiUsage.app" "$ASSET_NAME"
+          echo "asset_name=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+          echo "asset_path=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.asset_name }}
+          path: ${{ steps.package.outputs.asset_path }}
+          if-no-files-found: error
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.tag_name }}
+          name: AiUsage ${{ needs.tag.outputs.tag_name }}
+          body: |
+            Automated macOS release for ${{ needs.tag.outputs.tag_name }}.
+          files: ${{ steps.package.outputs.asset_path }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ env.RELEASE_TOKEN }}
