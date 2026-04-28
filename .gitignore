@@ -16,3 +16,5 @@ xcuserdata/
 
 # macOS Finder metadata
 .DS_Store
+.superset
+docs

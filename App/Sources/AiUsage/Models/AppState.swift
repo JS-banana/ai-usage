@@ -15,7 +15,7 @@ final class AppState {
     var selectedTabID: String?
     var overviewPanel: OverviewPanelSnapshot?
     var providerPanelsByID: [String: ProviderPanelSnapshot] = [:]
-    var groupQuotaSummary: GroupQuotaSummarySnapshot = .unconfigured()
+    var entitlementSummariesByTarget: [String: EntitlementSummarySnapshot] = [:]
     var menuBarSummary: MenuBarSummarySnapshot = .init(
         title: "AiUsage",
         subtitle: "暂无数据",
@@ -25,6 +25,7 @@ final class AppState {
 
     private let dataService: AppDataService?
     private let bootstrapErrorMessage: String?
+    private let menuBarSummaryReadModelService = MenuBarSummaryReadModelService()
 
     init(dataService: AppDataService) {
         self.dataService = dataService
@@ -39,8 +40,12 @@ final class AppState {
     }
 
     var selectedPanel: ProviderPanelSnapshot? {
-        guard let selectedTabID, selectedTabID != "overview" else { return nil }
+        guard let selectedTabID, selectedTabID != EntitlementTargetID.overview.storageKey else { return nil }
         return providerPanelsByID[selectedTabID]
+    }
+
+    var activeEntitlementSummary: EntitlementSummarySnapshot? {
+        entitlementSummariesByTarget[selectedTabID ?? EntitlementTargetID.overview.storageKey]
     }
 
     func startIfNeeded() async {
@@ -71,9 +76,9 @@ final class AppState {
             providerPreferences = snapshot.providerPreferences
             overviewPanel = snapshot.overview
             providerPanelsByID = snapshot.panelsByID
-            groupQuotaSummary = snapshot.groupQuotaSummary
-            menuBarSummary = snapshot.menuBarSummary
+            entitlementSummariesByTarget = snapshot.entitlementSummariesByTarget
             selectedTabID = snapshot.selectedTabID
+            menuBarSummary = snapshot.menuBarSummary
             lastRefresh = snapshot.lastRefresh
             statusMessage = snapshot.statusMessage
         } catch {
@@ -83,13 +88,23 @@ final class AppState {
 
     func selectTab(_ tabID: String) {
         selectedTabID = tabID
+        menuBarSummary = menuBarSummaryReadModelService.makeSummary(
+            activeTargetID: tabID,
+            overview: overviewPanel,
+            entitlementsByTarget: entitlementSummariesByTarget
+        )
     }
 
     func setProviderEnabled(_ providerID: String, enabled: Bool) {
         AppPreferences.setSourceEnabled(enabled, sourceID: providerID)
         if enabled == false, selectedTabID == providerID {
-            selectedTabID = "overview"
+            selectedTabID = EntitlementTargetID.overview.storageKey
         }
+        menuBarSummary = menuBarSummaryReadModelService.makeSummary(
+            activeTargetID: selectedTabID,
+            overview: overviewPanel,
+            entitlementsByTarget: entitlementSummariesByTarget
+        )
         Task {
             await refresh(trigger: .manual)
         }
