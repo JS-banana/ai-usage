@@ -54,6 +54,14 @@ find "$BIN_DIR" -maxdepth 1 -type d -name '*.bundle' -print0 | while IFS= read -
   cp -R "$bundle" "$RESOURCES_DIR/"
 done
 
+echo "==> Normalizing app bundle permissions"
+# Some SwiftPM resource bundles ship files as read-only (for example GRDB's
+# PrivacyInfo.xcprivacy). If we keep those modes in the distributed app,
+# `xattr -rd com.apple.quarantine` can fail with "Permission denied" after
+# users install the app. Normalize the bundle so the owner can update xattrs.
+chmod -R u+rwX,go+rX "$APP_DIR"
+chmod +x "$MACOS_DIR/$APP_NAME"
+
 echo "==> Writing Info.plist"
 cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
