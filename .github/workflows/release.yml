@@ -13,7 +13,7 @@ jobs:
   tag:
     if: >-
       github.event.pull_request.merged == true &&
-      github.event.pull_request.base.ref == 'master'
+      github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     env:
       RELEASE_TOKEN: ${{ secrets.TOKEN != '' && secrets.TOKEN || github.token }}
@@ -26,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ env.RELEASE_TOKEN }}
-          ref: master
+          ref: main
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -67,7 +67,7 @@ jobs:
             -m "Keep release metadata aligned with the generated tag" \
             -m "The release workflow builds the macOS app directly from build.sh, so the script version needs to move before the tag is created. This keeps the packaged app metadata consistent with the Git release version." \
             -m $'Constraint: The app version currently lives in build.sh rather than a dedicated manifest\nConfidence: high\nScope-risk: narrow\nDirective: If the release version source changes, update this workflow and scripts/ci/next-version.mjs together\nTested: GitHub Actions release workflow\nNot-tested: Local execution outside GitHub Actions'
-          git push origin HEAD:master
+          git push origin HEAD:main
 
       - name: Create and push tag
         id: tag
@@ -106,20 +106,27 @@ jobs:
       - name: Verify app bundle
         run: test -d "dist/AiUsage.app"
 
-      - name: Archive app bundle
+      - name: Package release assets
         id: package
         run: |
           VERSION="${{ needs.tag.outputs.version }}"
-          ASSET_NAME="AiUsage-macOS-${VERSION}.zip"
-          ditto -c -k --sequesterRsrc --keepParent "dist/AiUsage.app" "$ASSET_NAME"
-          echo "asset_name=$ASSET_NAME" >> "$GITHUB_OUTPUT"
-          echo "asset_path=$ASSET_NAME" >> "$GITHUB_OUTPUT"
+          ZIP_ASSET="AiUsage-macOS-${VERSION}.zip"
+          DMG_ASSET="AiUsage-macOS-${VERSION}.dmg"
+
+          ditto -c -k --sequesterRsrc --keepParent "dist/AiUsage.app" "$ZIP_ASSET"
+          bash scripts/ci/package-dmg.sh "dist/AiUsage.app" "$DMG_ASSET" "AiUsage ${VERSION}"
+
+          echo "artifact_name=AiUsage-macOS-${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "zip_asset=$ZIP_ASSET" >> "$GITHUB_OUTPUT"
+          echo "dmg_asset=$DMG_ASSET" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.asset_name }}
-          path: ${{ steps.package.outputs.asset_path }}
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            ${{ steps.package.outputs.zip_asset }}
+            ${{ steps.package.outputs.dmg_asset }}
           if-no-files-found: error
 
       - name: Publish release
@@ -129,7 +136,9 @@ jobs:
           name: AiUsage ${{ needs.tag.outputs.tag_name }}
           body: |
             Automated macOS release for ${{ needs.tag.outputs.tag_name }}.
-          files: ${{ steps.package.outputs.asset_path }}
+          files: |
+            ${{ steps.package.outputs.zip_asset }}
+            ${{ steps.package.outputs.dmg_asset }}
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
