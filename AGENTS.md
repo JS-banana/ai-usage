@@ -1,7 +1,21 @@
-<claude-mem-context>
-# Memory Context
+# Ai Usage App
 
-# [ai-usage-local] recent context, 2026-04-23 10:06am GMT+8
+AI 使用情况查看
 
-No previous sessions found.
-</claude-mem-context>
+## 需求
+
+1. token 使用情况统计查看，有日、周、月等维度（本地计算统计）
+2. 余量查询，根据模型提供商，可查询 coding plan 等订阅的 5h、week 剩余额度查询（需要对齐模型服务商的查询接口）
+
+## 资料
+
+1. [codexbar](https://github.com/steipete/codexbar)：该项目作为项目的整体参考，功能模块，界面效果类似，同为 swift 开发
+
+## 规则
+
+1. 本地 token 统计，不要每次都全量计算，对于今日之前，已经计算的数据可以缓存，避免消耗，只有当前和今后的数据才会一直更新
+
+## 待办
+
+ 1. 需要考虑下如何对 [sub2api](https://github.com/Wei-Shaw/sub2api) 这个平台的支持，在不改写这个项目的情况下是否有合适的方案？能否通过 APIKEY 的方式，查询当当前分组的所有账号的综合统计情况，比如我在“分组A” 中添加了3 个 gpt plus 订阅账号，那么我统计的应该是这个 3 个账号的综合余额信息，分别计算 5h 和 week
+    - 如果有必要，可以考虑 git clone 下来这个仓库，查看相关实现和逻辑
