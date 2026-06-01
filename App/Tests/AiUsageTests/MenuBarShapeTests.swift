@@ -32,21 +32,19 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertTrue(source.contains("entitlementSummaryCard(activeEntitlementSummary)"))
         XCTAssertTrue(source.contains("summary.status != .unconfigured"))
         XCTAssertTrue(source.contains("actionToolbar"))
-        XCTAssertTrue(source.contains("CompactActionButton"))
-        XCTAssertTrue(source.contains("管理账号"))
+        XCTAssertTrue(source.contains("ActionListRow"))
+        XCTAssertTrue(source.contains("添加账号"))
+        XCTAssertTrue(source.contains("completedMiMoLoginSequence"))
+        XCTAssertTrue(source.contains("showInlineLogin = false"))
         XCTAssertTrue(source.contains("关于 AiUsage"))
         XCTAssertTrue(source.contains("退出"))
-        XCTAssertTrue(source.contains(".help(title)"))
         XCTAssertTrue(source.contains(".onHover"))
-        XCTAssertTrue(source.contains("if isHovered"))
-        XCTAssertTrue(source.contains(".fixedSize()"))
+        XCTAssertTrue(source.contains("isHovered"))
         XCTAssertTrue(source.contains("ProviderTabButton(tab: tab"))
         XCTAssertTrue(source.contains("ProviderTabMiniProgress"))
-        XCTAssertFalse(source.contains("actionList"))
-        XCTAssertFalse(source.contains("ActionRow"))
-        XCTAssertFalse(source.contains("appState.groupQuotaSummary"))
-        XCTAssertFalse(source.contains("ellipsis.circle"))
-        XCTAssertFalse(source.contains("font(.caption.weight(.medium))"))
+        XCTAssertFalse(source.contains("CompactActionButton"))
+        XCTAssertFalse(source.contains("管理账号"))
+        XCTAssertFalse(source.contains("Quota Targets"))
     }
 
     func testAppShellUsesRenderedTemplateImageForMenuBarExtra() throws {
@@ -56,26 +54,76 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertFalse(source.contains("chart.bar.xaxis"))
     }
 
-    func testSettingsSourceIncludesTargetScopedEntitlementSections() throws {
+    func testSettingsSourceIncludesProviderToggleSection() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/SettingsView.swift")
         XCTAssertTrue(source.contains("账号与来源"))
-        XCTAssertTrue(source.contains("EntitlementPreferences.descriptorTargets"))
-        XCTAssertTrue(source.contains("Picker(\"来源\""))
-        XCTAssertTrue(source.contains("总览套餐额度"))
+        XCTAssertTrue(source.contains("当前状态"))
+        XCTAssertTrue(source.contains("套餐额度"))
+        XCTAssertTrue(source.contains("Text(\"第三方 API\")"))
         XCTAssertTrue(source.contains("Quota URL"))
+        XCTAssertTrue(source.contains("API Key"))
         XCTAssertFalse(source.contains("Quota 服务"))
         XCTAssertFalse(source.contains("Group ID"))
     }
 
-    func testQuotaSummarySourceKeepsTwoWindowCompactCards() throws {
+    func testMiMoLoginSourceUsesOfficialWebLogin() throws {
+        let credentialSource = try sourceText(path: "App/Sources/AiUsage/Views/MiMoCredentialFields.swift")
+        let windowSource = try sourceText(path: "App/Sources/AiUsage/Views/MiMoWebLoginWindowView.swift")
+        XCTAssertTrue(credentialSource.contains("登录小米账号"))
+        XCTAssertTrue(credentialSource.contains("openWindow(id: \"mimo-login\")"))
+        XCTAssertTrue(windowSource.contains("MiMoWebLoginView"))
+        XCTAssertTrue(windowSource.contains("storeWebSession(token:"))
+        XCTAssertTrue(windowSource.contains("markMiMoLoginCompleted()"))
+        XCTAssertFalse(credentialSource.contains("SecureField(\"密码\""))
+        XCTAssertFalse(credentialSource.contains("登录并查询"))
+        XCTAssertFalse(credentialSource.contains("手动导入"))
+        XCTAssertFalse(credentialSource.contains("Cookie"))
+    }
+
+    func testMiMoWebLoginUsesDedicatedWindowNotMenuBarSheet() throws {
+        let credentialSource = try sourceText(path: "App/Sources/AiUsage/Views/MiMoCredentialFields.swift")
+        let appSource = try sourceText(path: "App/Sources/AiUsage/AiUsageApp.swift")
+
+        XCTAssertFalse(credentialSource.contains(".sheet(isPresented: $isShowingWebLogin)"))
+        XCTAssertFalse(credentialSource.contains("@State private var isShowingWebLogin"))
+        XCTAssertTrue(appSource.contains("Window(\"MiMo 登录\", id: \"mimo-login\")"))
+        XCTAssertTrue(appSource.contains("MiMoWebLoginWindowView"))
+        XCTAssertTrue(credentialSource.contains("openWindow(id: \"mimo-login\")"))
+    }
+
+    func testRootViewDoesNotInstantiateHeadlessMiMoSSOForWebLogin() throws {
+        let rootSource = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+        let windowSource = try sourceText(path: "App/Sources/AiUsage/Views/MiMoWebLoginWindowView.swift")
+        XCTAssertFalse(rootSource.contains("MiMoSSOAuthService"))
+        XCTAssertFalse(windowSource.contains("MiMoSSOAuthService"))
+    }
+
+    func testQuotaSummarySourceUsesVisibleWindowsForDynamicCards() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaSummaryViews.swift")
         XCTAssertTrue(source.contains("QuotaProgressRiskLevel"))
-        XCTAssertTrue(source.contains("CompactQuotaWindowCard(window: summary.primaryWindow"))
-        XCTAssertTrue(source.contains("CompactQuotaWindowCard(window: summary.secondaryWindow"))
+        XCTAssertTrue(source.contains("summary.visibleWindows"))
+        XCTAssertTrue(source.contains("ForEach(windows)"))
         XCTAssertFalse(source.contains("summary.fiveHour"))
         XCTAssertFalse(source.contains("summary.weekly"))
         XCTAssertFalse(source.contains("Text(summary.title)"))
-        XCTAssertFalse(source.contains("window.secondaryText"))
+        XCTAssertTrue(source.contains("window.secondaryText"))
+    }
+
+    func testMenuBarGlyphUsesVisibleWindowProgress() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Services/MenuBarSummaryReadModelService.swift")
+        XCTAssertTrue(source.contains("summary.visibleWindows"))
+        XCTAssertTrue(source.contains("rightRatio: rightProgress"))
+        XCTAssertFalse(source.contains("summary.secondaryWindow.progress ?? 0.18"))
+    }
+
+    func testMiMoKeychainReadsDisallowAuthenticationUI() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Services/EntitlementPreferences.swift")
+        XCTAssertTrue(source.contains("LAContext"))
+        XCTAssertTrue(source.contains("interactionNotAllowed = true"))
+        XCTAssertTrue(source.contains("kSecUseAuthenticationContext as String"))
+        XCTAssertTrue(source.contains("kSecUseAuthenticationUI as String"))
+        XCTAssertTrue(source.contains("kSecUseAuthenticationUISkip"))
+        XCTAssertTrue(source.contains("DispatchSemaphore"))
     }
 
     func testBrandCatalogSourceProvidesKnownProviderMappings() throws {

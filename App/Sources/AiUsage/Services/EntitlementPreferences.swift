@@ -1,4 +1,6 @@
 import Foundation
+import LocalAuthentication
+import Security
 
 enum EntitlementPreferences {
     private static let prefix = "entitlement.target."
@@ -20,7 +22,9 @@ enum EntitlementPreferences {
     ) -> EntitlementTargetConfiguration {
         ensureLegacyOverviewMigration(userDefaults: userDefaults)
         let keyPrefix = prefix + targetID.storageKey + "."
-        let selectedSource = EntitlementSourceSelection(rawValue: userDefaults.string(forKey: keyPrefix + "selectedSource") ?? "none") ?? .none
+        let selectedSourceKey = keyPrefix + "selectedSource"
+        seedMiMoSourceIfStoredSessionExists(for: targetID, selectedSourceKey: selectedSourceKey, userDefaults: userDefaults)
+        let selectedSource = EntitlementSourceSelection(rawValue: userDefaults.string(forKey: selectedSourceKey) ?? "none") ?? .none
         let endpointRaw = (userDefaults.string(forKey: keyPrefix + "bridge.endpointURL") ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let apiKey = (userDefaults.string(forKey: keyPrefix + "bridge.apiKey") ?? "")
@@ -121,5 +125,299 @@ enum EntitlementPreferences {
             return absolute
         }
         return URL(string: "https://\(rawValue)")
+    }
+
+    private static func seedMiMoSourceIfStoredSessionExists(
+        for targetID: EntitlementTargetID,
+        selectedSourceKey: String,
+        userDefaults: UserDefaults
+    ) {
+        guard userDefaults.object(forKey: selectedSourceKey) == nil else { return }
+        guard case .provider(let providerID) = targetID, providerID == "mimo" else { return }
+        guard hasStoredMiMoServiceToken(userDefaults: userDefaults) else { return }
+        userDefaults.set(EntitlementSourceSelection.mimo.rawValue, forKey: selectedSourceKey)
+    }
+
+    private static func hasStoredMiMoServiceToken(userDefaults: UserDefaults) -> Bool {
+        mimoAccounts(userDefaults: userDefaults).contains { account in
+            mimoServiceToken(forAccount: account.id, userDefaults: userDefaults) != nil
+        }
+    }
+
+    // MARK: - MiMo Credentials (Keychain)
+
+    private static let mimoCredentialsService = "ai-usage.mimo.credentials"
+    private static let mimoKeychainNamespaceKey = "entitlement.mimo.keychainNamespace"
+
+    static func mimoCredentials(userDefaults: UserDefaults = .standard) -> MiMoCredentials? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoCredentialsService, userDefaults: userDefaults),
+            kSecAttrAccount as String: "xiaomi",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = copyKeychainItem(nonInteractiveKeychainQuery(query), item: &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let username = json["username"],
+              let passwordMD5 = json["passwordMD5"] else { return nil }
+        return MiMoCredentials(username: username, passwordMD5: passwordMD5)
+    }
+
+    static func setMiMoCredentials(_ creds: MiMoCredentials, userDefaults: UserDefaults = .standard) {
+        guard let data = try? JSONSerialization.data(withJSONObject: [
+            "username": creds.username,
+            "passwordMD5": creds.passwordMD5
+        ]) else { return }
+        deleteMiMoKeychain(userDefaults: userDefaults)
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoCredentialsService, userDefaults: userDefaults),
+            kSecAttrAccount as String: "xiaomi",
+            kSecValueData as String: data
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    static func clearMiMoCredentials(userDefaults: UserDefaults = .standard) {
+        deleteMiMoKeychain(userDefaults: userDefaults)
+    }
+
+    private static func deleteMiMoKeychain(userDefaults: UserDefaults) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoCredentialsService, userDefaults: userDefaults),
+            kSecAttrAccount as String: "xiaomi"
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    // MARK: - MiMo Multi-Account (Keychain)
+
+    private static let mimoAccountsService = "ai-usage.mimo.accounts"
+    private static let mimoAccountsAccount = "accounts"
+    private static let mimoAccountsMirrorKey = "entitlement.mimo.accounts.mirror"
+
+    static func mimoAccounts(userDefaults: UserDefaults = .standard) -> [MiMoAccount] {
+        if let data = userDefaults.data(forKey: mimoAccountsMirrorKey),
+           let accounts = try? JSONDecoder().decode([MiMoAccount].self, from: data) {
+            return accounts
+        }
+        if let data = readMiMoAccountsKeychain(userDefaults: userDefaults),
+           let accounts = try? JSONDecoder().decode([MiMoAccount].self, from: data) {
+            userDefaults.set(data, forKey: mimoAccountsMirrorKey)
+            return accounts
+        }
+        // Migration: if old single-credential exists but accounts does not, migrate
+        if let legacy = mimoCredentials(userDefaults: userDefaults) {
+            let migrated = MiMoAccount(credentials: legacy)
+            setMiMoAccounts([migrated], userDefaults: userDefaults)
+            return [migrated]
+        }
+        return []
+    }
+
+    static func setMiMoAccounts(_ accounts: [MiMoAccount], userDefaults: UserDefaults = .standard) {
+        guard let data = try? JSONEncoder().encode(accounts) else { return }
+        userDefaults.set(data, forKey: mimoAccountsMirrorKey)
+        deleteMiMoAccountsKeychain(userDefaults: userDefaults)
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoAccountsService, userDefaults: userDefaults),
+            kSecAttrAccount as String: mimoAccountsAccount,
+            kSecValueData as String: data
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    @discardableResult
+    static func addMiMoAccount(_ account: MiMoAccount, userDefaults: UserDefaults = .standard) -> MiMoAccount {
+        var existing = mimoAccounts(userDefaults: userDefaults)
+        let savedAccount: MiMoAccount
+        if let index = existing.firstIndex(where: { $0.credentials.username == account.credentials.username }) {
+            savedAccount = MiMoAccount(
+                id: existing[index].id,
+                credentials: account.credentials,
+                displayName: account.displayName
+            )
+            existing[index] = savedAccount
+        } else {
+            savedAccount = account
+            existing.append(account)
+        }
+        setMiMoAccounts(existing, userDefaults: userDefaults)
+        return savedAccount
+    }
+
+    static func removeMiMoAccount(id: UUID, userDefaults: UserDefaults = .standard) {
+        var existing = mimoAccounts(userDefaults: userDefaults)
+        existing.removeAll { $0.id == id }
+        setMiMoAccounts(existing, userDefaults: userDefaults)
+        clearMiMoServiceToken(forAccount: id, userDefaults: userDefaults)
+    }
+
+    static func clearMiMoAccounts(userDefaults: UserDefaults = .standard) {
+        userDefaults.removeObject(forKey: mimoAccountsMirrorKey)
+        deleteMiMoAccountsKeychain(userDefaults: userDefaults)
+    }
+
+    private static func readMiMoAccountsKeychain(userDefaults: UserDefaults) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoAccountsService, userDefaults: userDefaults),
+            kSecAttrAccount as String: mimoAccountsAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = copyKeychainItem(nonInteractiveKeychainQuery(query), item: &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return data
+    }
+
+    private static func deleteMiMoAccountsKeychain(userDefaults: UserDefaults) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoAccountsService, userDefaults: userDefaults),
+            kSecAttrAccount as String: mimoAccountsAccount
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    // MARK: - MiMo ServiceToken (Keychain, keyed by account ID)
+
+    private static let mimoTokenService = "ai-usage.mimo.service-token"
+
+    private static func mimoTokenKeyPrefix(forAccount accountID: UUID) -> String {
+        "entitlement.mimo.account.\(accountID.uuidString).token."
+    }
+
+    static func mimoServiceToken(
+        forAccount accountID: UUID,
+        userDefaults: UserDefaults = .standard
+    ) -> MiMoServiceToken? {
+        if let data = readMiMoTokenKeychain(forAccount: accountID, userDefaults: userDefaults),
+           let token = try? JSONDecoder().decode(MiMoServiceToken.self, from: data) {
+            return token
+        }
+
+        let keyPrefix = mimoTokenKeyPrefix(forAccount: accountID)
+        guard let serviceToken = userDefaults.string(forKey: keyPrefix + "serviceToken"),
+              let userId = userDefaults.string(forKey: keyPrefix + "userId"),
+              let slh = userDefaults.string(forKey: keyPrefix + "slh"),
+              let ph = userDefaults.string(forKey: keyPrefix + "ph") else { return nil }
+        let acquiredAt = userDefaults.object(forKey: keyPrefix + "acquiredAt") as? Date ?? Date()
+        let migrated = MiMoServiceToken(
+            serviceToken: serviceToken,
+            userId: userId,
+            slh: slh,
+            ph: ph,
+            acquiredAt: acquiredAt
+        )
+        setMiMoServiceToken(migrated, forAccount: accountID, userDefaults: userDefaults)
+        return migrated
+    }
+
+    static func setMiMoServiceToken(
+        _ token: MiMoServiceToken,
+        forAccount accountID: UUID,
+        userDefaults: UserDefaults = .standard
+    ) {
+        guard let data = try? JSONEncoder().encode(token) else { return }
+        deleteMiMoTokenKeychain(forAccount: accountID, userDefaults: userDefaults)
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoTokenService, userDefaults: userDefaults),
+            kSecAttrAccount as String: accountID.uuidString,
+            kSecValueData as String: data
+        ]
+        SecItemAdd(addQuery as CFDictionary, nil)
+        clearLegacyMiMoServiceToken(forAccount: accountID, userDefaults: userDefaults)
+    }
+
+    static func clearMiMoServiceToken(
+        forAccount accountID: UUID,
+        userDefaults: UserDefaults = .standard
+    ) {
+        deleteMiMoTokenKeychain(forAccount: accountID, userDefaults: userDefaults)
+        clearLegacyMiMoServiceToken(forAccount: accountID, userDefaults: userDefaults)
+    }
+
+    private static func readMiMoTokenKeychain(forAccount accountID: UUID, userDefaults: UserDefaults) -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoTokenService, userDefaults: userDefaults),
+            kSecAttrAccount as String: accountID.uuidString,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var item: CFTypeRef?
+        let status = copyKeychainItem(nonInteractiveKeychainQuery(query), item: &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return data
+    }
+
+    private static func deleteMiMoTokenKeychain(forAccount accountID: UUID, userDefaults: UserDefaults) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService(mimoTokenService, userDefaults: userDefaults),
+            kSecAttrAccount as String: accountID.uuidString
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    private static func clearLegacyMiMoServiceToken(forAccount accountID: UUID, userDefaults: UserDefaults) {
+        let keyPrefix = mimoTokenKeyPrefix(forAccount: accountID)
+        userDefaults.removeObject(forKey: keyPrefix + "serviceToken")
+        userDefaults.removeObject(forKey: keyPrefix + "userId")
+        userDefaults.removeObject(forKey: keyPrefix + "slh")
+        userDefaults.removeObject(forKey: keyPrefix + "ph")
+        userDefaults.removeObject(forKey: keyPrefix + "acquiredAt")
+    }
+
+    private static func keychainService(_ service: String, userDefaults: UserDefaults) -> String {
+        let namespace = (userDefaults.string(forKey: mimoKeychainNamespaceKey) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard namespace.isEmpty == false else { return service }
+        return "\(service).\(namespace)"
+    }
+
+    private static func nonInteractiveKeychainQuery(_ query: [String: Any]) -> [String: Any] {
+        var query = query
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        return query
+    }
+
+    private static func copyKeychainItem(_ query: [String: Any], item: inout CFTypeRef?) -> OSStatus {
+        let semaphore = DispatchSemaphore(value: 0)
+        final class Box: @unchecked Sendable {
+            var status: OSStatus = errSecInternalError
+            var item: CFTypeRef?
+        }
+        final class QueryBox: @unchecked Sendable {
+            let query: CFDictionary
+
+            init(_ query: [String: Any]) {
+                self.query = query as CFDictionary
+            }
+        }
+        let box = Box()
+        let queryBox = QueryBox(query)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var result: CFTypeRef?
+            box.status = SecItemCopyMatching(queryBox.query, &result)
+            box.item = result
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + 0.5) == .success else {
+            return errSecInteractionNotAllowed
+        }
+        item = box.item
+        return box.status
     }
 }

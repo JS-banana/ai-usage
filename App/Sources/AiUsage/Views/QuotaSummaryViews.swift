@@ -37,9 +37,11 @@ struct QuotaSummarySection: View {
                         .lineLimit(2)
                 }
             } else {
+                let windows = summary.visibleWindows
                 HStack(spacing: 8) {
-                    CompactQuotaWindowCard(window: summary.primaryWindow, compact: compact)
-                    CompactQuotaWindowCard(window: summary.secondaryWindow, compact: compact)
+                    ForEach(windows) { window in
+                        CompactQuotaWindowCard(window: window, compact: compact)
+                    }
                 }
             }
         }
@@ -63,10 +65,20 @@ private struct CompactQuotaWindowCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
-            Text(window.footnoteText)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+            if window.secondaryText.isEmpty == false {
+                Text(window.secondaryText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+
+            if window.footnoteText.isEmpty == false {
+                Text(window.footnoteText)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, compact ? 10 : 12)

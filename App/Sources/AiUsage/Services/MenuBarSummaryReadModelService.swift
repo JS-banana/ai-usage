@@ -87,9 +87,12 @@ struct MenuBarSummaryReadModelService {
     private func glyph(for summary: EntitlementSummarySnapshot) -> QuotaMenuBarGlyphState {
         switch summary.status {
         case .ready, .stale:
+            let windows = summary.visibleWindows
+            let leftProgress = windows.first?.progress ?? 0.18
+            let rightProgress = windows.dropFirst().first?.progress ?? leftProgress
             return QuotaMenuBarGlyphState(
-                leftRatio: summary.primaryWindow.progress ?? 0.18,
-                rightRatio: summary.secondaryWindow.progress ?? 0.18,
+                leftRatio: leftProgress,
+                rightRatio: rightProgress,
                 isDimmed: false
             )
         case .failed, .configuredNonlive, .unconfigured, .unavailable:

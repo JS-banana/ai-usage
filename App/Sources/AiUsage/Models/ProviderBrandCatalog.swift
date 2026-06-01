@@ -58,6 +58,13 @@ enum ProviderBrandCatalog {
                 resourceName: "ProviderIcon-antigravity",
                 fallbackIcon: .monogram("A")
             )
+        case "mimo":
+            brandedProvider(
+                token: .mimo,
+                color: ProviderBrandColor(red: 255.0 / 255.0, green: 103.0 / 255.0, blue: 0.0),
+                resourceName: "ProviderIcon-mimo",
+                fallbackIcon: .monogram("M")
+            )
         default:
             nil
         }

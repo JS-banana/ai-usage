@@ -8,6 +8,7 @@ enum ProviderBrandAccentToken: String, Hashable, Sendable {
     case gemini
     case opencode
     case antigravity
+    case mimo
     case generic
 }
 

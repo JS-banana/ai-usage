@@ -7,16 +7,19 @@ import ProviderKit
 final class SourceRegistryTests: XCTestCase {
     func testDefaultRegistryExposesAllBuiltInParsers() {
         let registry = StaticSourceRegistry()
-        XCTAssertEqual(registry.allSources().map(\.id), ["claude-code", "codex", "opencode", "gemini"])
+        XCTAssertEqual(registry.allSources().map(\.id), ["claude-code", "codex", "opencode", "gemini", "mimo"])
         XCTAssertEqual(registry.enabledParsers().map(\.sourceID), ["claude-code", "codex", "opencode", "gemini"])
         let providers = registry.providerDescriptors()
-        XCTAssertEqual(providers.map(\.displayName), ["Claude", "Codex", "OpenCode", "Gemini"])
-        XCTAssertTrue(providers.allSatisfy { $0.capabilities.contains(.localUsageFacts) })
+        XCTAssertEqual(providers.map(\.displayName), ["Claude", "Codex", "OpenCode", "Gemini", "MiMo"])
+        XCTAssertTrue(providers.filter { $0.id != "mimo" }.allSatisfy { $0.capabilities.contains(.localUsageFacts) })
         XCTAssertEqual(providers.first(where: { $0.id == "claude-code" })?.backendKind, .hybrid)
         XCTAssertEqual(providers.first(where: { $0.id == "claude-code" })?.credentialKind, .apiKey)
         XCTAssertTrue(providers.first(where: { $0.id == "claude-code" })?.capabilities.contains(.accountQuotaSnapshots) == true)
-        XCTAssertTrue(providers.filter { $0.id != "claude-code" }.allSatisfy { $0.backendKind == .localLogs })
-        XCTAssertTrue(providers.filter { $0.id != "claude-code" }.allSatisfy { $0.credentialKind == .none })
+        XCTAssertTrue(providers.first(where: { $0.id == "mimo" })?.capabilities.contains(.accountQuotaSnapshots) == true)
+        XCTAssertEqual(providers.first(where: { $0.id == "mimo" })?.backendKind, .remoteAPI)
+        XCTAssertEqual(providers.first(where: { $0.id == "mimo" })?.credentialKind, .accountSession)
+        XCTAssertTrue(providers.filter { $0.id != "claude-code" && $0.id != "mimo" }.allSatisfy { $0.backendKind == .localLogs })
+        XCTAssertTrue(providers.filter { $0.id != "claude-code" && $0.id != "mimo" }.allSatisfy { $0.credentialKind == .none })
     }
 
     func testQuotaRefreshCoordinatorPlansQuotaCapableProvidersOnly() async {

@@ -16,6 +16,7 @@ final class AppState {
     var overviewPanel: OverviewPanelSnapshot?
     var providerPanelsByID: [String: ProviderPanelSnapshot] = [:]
     var entitlementSummariesByTarget: [String: EntitlementSummarySnapshot] = [:]
+    var completedMiMoLoginSequence = 0
     var menuBarSummary: MenuBarSummarySnapshot = .init(
         title: "AiUsage",
         subtitle: "暂无数据",
@@ -26,6 +27,10 @@ final class AppState {
     private let dataService: AppDataService?
     private let bootstrapErrorMessage: String?
     private let menuBarSummaryReadModelService = MenuBarSummaryReadModelService()
+    private var refreshSequence = 0
+    private var autoRefreshTask: Task<Void, Never>?
+
+    var isAutoRefreshActive: Bool { autoRefreshTask != nil }
 
     init(dataService: AppDataService) {
         self.dataService = dataService
@@ -50,9 +55,13 @@ final class AppState {
 
     func startIfNeeded() async {
         guard hasBootstrapped == false else { return }
-        hasBootstrapped = true
-        guard dataService != nil else { return }
-        await refresh(trigger: .startup)
+        guard dataService != nil else {
+            hasBootstrapped = true
+            return
+        }
+        if await refresh(trigger: .startup) {
+            hasBootstrapped = true
+        }
     }
 
     func refreshOnBecomeActive() async {
@@ -60,18 +69,36 @@ final class AppState {
         await refresh(trigger: .background)
     }
 
-    func refresh(trigger: ImportTrigger = .manual) async {
-        guard isLoading == false else { return }
+    @discardableResult
+    func refresh(trigger: ImportTrigger = .manual) async -> Bool {
+        guard isLoading == false else { return false }
         guard let dataService else {
             statusMessage = bootstrapErrorMessage ?? "刷新失败：数据服务未初始化"
-            return
+            return false
         }
+        let previousStatusMessage = statusMessage
+        refreshSequence += 1
+        let refreshID = refreshSequence
         isLoading = true
         statusMessage = "正在刷新数据…"
-        defer { isLoading = false }
+        defer {
+            if refreshSequence == refreshID {
+                isLoading = false
+            }
+        }
 
         do {
-            let snapshot = try await dataService.refreshAll(trigger: trigger, preferredTabID: selectedTabID)
+            let snapshot = try await withTaskCancellationHandler {
+                try await dataService.refreshAll(trigger: trigger, preferredTabID: selectedTabID)
+            } onCancel: { [weak self, previousStatusMessage, refreshID] in
+                Task { @MainActor in
+                    guard let self, self.refreshSequence == refreshID else { return }
+                    self.refreshSequence += 1
+                    self.statusMessage = previousStatusMessage
+                    self.isLoading = false
+                }
+            }
+            guard refreshSequence == refreshID else { return false }
             providerTabs = snapshot.providerTabs
             providerPreferences = snapshot.providerPreferences
             overviewPanel = snapshot.overview
@@ -81,8 +108,13 @@ final class AppState {
             menuBarSummary = snapshot.menuBarSummary
             lastRefresh = snapshot.lastRefresh
             statusMessage = snapshot.statusMessage
+            return true
+        } catch is CancellationError {
+            statusMessage = previousStatusMessage
+            return false
         } catch {
             statusMessage = "刷新失败：\(error.localizedDescription)"
+            return false
         }
     }
 
@@ -112,5 +144,25 @@ final class AppState {
 
     func isProviderEnabled(_ providerID: String) -> Bool {
         providerPreferences.first(where: { $0.id == providerID })?.isEnabled ?? true
+    }
+
+    func markMiMoLoginCompleted() {
+        completedMiMoLoginSequence += 1
+    }
+
+    func startAutoRefresh(intervalSeconds: TimeInterval = 1800) {
+        cancelAutoRefresh()
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(intervalSeconds))
+                guard !Task.isCancelled else { break }
+                await self?.refresh(trigger: .background)
+            }
+        }
+    }
+
+    func cancelAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
     }
 }

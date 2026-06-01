@@ -30,6 +30,7 @@ struct AppContainer {
                 entitlementService: EntitlementResolutionService(
                     thirdPartyService: LaifuyouQuotaService(),
                     officialProbe: OfficialEntitlementProbe(),
+                    mimoQuota: MiMoQuotaService(client: URLSessionHTTPClient()),
                     userDefaults: .standard
                 ),
                 menuBarSummaryReadModelService: MenuBarSummaryReadModelService()

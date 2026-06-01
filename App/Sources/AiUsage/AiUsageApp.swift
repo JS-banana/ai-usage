@@ -17,7 +17,8 @@ struct AiUsageApp: App {
             RootView()
                 .environment(appState)
                 .task {
-                    await appState.startIfNeeded()
+                    Task { await appState.startIfNeeded() }
+                    appState.startAutoRefresh()
                 }
         } label: {
             Image(nsImage: menuBarImageRenderer.image(for: appState.menuBarSummary.glyph))
@@ -31,9 +32,15 @@ struct AiUsageApp: App {
             ProviderDetailView()
                 .environment(appState)
                 .task {
-                    await appState.startIfNeeded()
+                    Task { await appState.startIfNeeded() }
                 }
                 .frame(minWidth: 640, minHeight: 520)
+        }
+        .windowStyle(.automatic)
+
+        Window("MiMo 登录", id: "mimo-login") {
+            MiMoWebLoginWindowView()
+                .environment(appState)
         }
         .windowStyle(.automatic)
 

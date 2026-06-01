@@ -1,17 +1,20 @@
 import Foundation
 
-actor EntitlementResolutionService {
+final class EntitlementResolutionService: @unchecked Sendable {
     private let thirdPartyService: LaifuyouQuotaService
     private let officialProbe: OfficialEntitlementProbe
+    private let mimoQuota: MiMoQuotaService?
     private let userDefaults: UserDefaults
 
     init(
         thirdPartyService: LaifuyouQuotaService,
         officialProbe: OfficialEntitlementProbe = OfficialEntitlementProbe(),
+        mimoQuota: MiMoQuotaService? = nil,
         userDefaults: UserDefaults = .standard
     ) {
         self.thirdPartyService = thirdPartyService
         self.officialProbe = officialProbe
+        self.mimoQuota = mimoQuota
         self.userDefaults = userDefaults
     }
 
@@ -37,7 +40,7 @@ actor EntitlementResolutionService {
         return summaries
     }
 
-    private func resolveSummary(
+    func resolveSummary(
         for descriptor: EntitlementTargetDescriptor,
         configuration: EntitlementTargetConfiguration,
         now: Date
@@ -64,7 +67,130 @@ actor EntitlementResolutionService {
             } catch {
                 return makeFailedSummary(for: descriptor, error: error)
             }
+        case .mimo:
+            guard let mimoQuota else {
+                return makeUnconfiguredSummary(for: descriptor)
+            }
+            let accounts = EntitlementPreferences.mimoAccounts(userDefaults: userDefaults)
+            guard !accounts.isEmpty else {
+                return makeUnconfiguredSummary(for: descriptor)
+            }
+
+            var tokens: [UUID: MiMoServiceToken] = [:]
+            for account in accounts {
+                if let token = EntitlementPreferences.mimoServiceToken(forAccount: account.id, userDefaults: userDefaults) {
+                    tokens[account.id] = token
+                }
+            }
+
+            guard !tokens.isEmpty else {
+                return makeMiMoLoginRequiredSummary(for: descriptor)
+            }
+
+            let results = await mimoQuota.fetchAll(
+                tokens: tokens,
+                targetID: descriptor.targetID,
+                title: descriptor.name,
+                now: now
+            )
+
+            return aggregateMiMoResults(
+                results: results,
+                descriptor: descriptor,
+                now: now
+            )
         }
+    }
+
+    private func aggregateMiMoResults(
+        results: [UUID: AccountFetchResult],
+        descriptor: EntitlementTargetDescriptor,
+        now: Date
+    ) -> EntitlementSummarySnapshot {
+        let successful = results.values.filter { $0.snapshot != nil }
+        guard !successful.isEmpty else {
+            let firstError = results.values.first?.error
+            if let error = firstError as? MiMoQuotaService.QuotaError,
+               case .unauthorized = error {
+                return makeMiMoLoginRequiredSummary(for: descriptor)
+            }
+            return makeFailedSummary(for: descriptor, error: firstError ?? MiMoSSOAuthService.AuthError.invalidCredentials)
+        }
+
+        let totalPlanUsed = successful.reduce(0) { $0 + $1.planUsed }
+        let totalPlanLimit = successful.reduce(0) { $0 + $1.planLimit }
+        let totalCompensationUsed = successful.reduce(0) { $0 + $1.compensationUsed }
+        let totalCompensationLimit = successful.reduce(0) { $0 + $1.compensationLimit }
+        let earliestExpiry = successful.compactMap(\.expiresAt).min()
+
+        let planProgress = totalPlanLimit > 0 ? Double(totalPlanUsed) / Double(totalPlanLimit) : 0
+        let compensationProgress = totalCompensationLimit > 0 ? Double(totalCompensationUsed) / Double(totalCompensationLimit) : 0
+
+        let targetID = descriptor.targetID
+        let primaryWindow = EntitlementWindowSnapshot(
+            id: "\(targetID.storageKey)-mimo-primary",
+            title: "套餐总额度",
+            primaryText: percentageText(planProgress),
+            secondaryText: tokenUsageText(used: totalPlanUsed, limit: totalPlanLimit),
+            footnoteText: expiryText(earliestExpiry),
+            progress: planProgress
+        )
+
+        let secondaryWindow: EntitlementWindowSnapshot
+        if totalCompensationLimit > 0 {
+            secondaryWindow = EntitlementWindowSnapshot(
+                id: "\(targetID.storageKey)-mimo-compensation",
+                title: "补偿额度",
+                primaryText: percentageText(compensationProgress),
+                secondaryText: tokenUsageText(used: totalCompensationUsed, limit: totalCompensationLimit),
+                footnoteText: expiryText(earliestExpiry),
+                progress: compensationProgress
+            )
+        } else {
+            secondaryWindow = .hidden(id: "\(targetID.storageKey)-mimo-compensation")
+        }
+
+        return EntitlementSummarySnapshot(
+            targetID: targetID,
+            title: descriptor.name,
+            message: "",
+            updatedAt: now,
+            status: .ready,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: primaryWindow,
+            secondaryWindow: secondaryWindow
+        )
+    }
+
+    private func percentageText(_ progress: Double) -> String {
+        "已用 \(min(max(progress, 0), 1).formatted(.percent.precision(.fractionLength(0))))"
+    }
+
+    private func tokenUsageText(used: Int, limit: Int) -> String {
+        "\(tokenText(used)) / \(tokenText(limit)) token"
+    }
+
+    private func tokenText(_ value: Int) -> String {
+        let absolute = abs(value)
+        if absolute >= 100_000_000 {
+            return "\(trimmed(Double(value) / 100_000_000))亿"
+        }
+        if absolute >= 10_000 {
+            return "\(trimmed(Double(value) / 10_000))万"
+        }
+        return value.formatted()
+    }
+
+    private func trimmed(_ value: Double) -> String {
+        String(format: "%.2f", value)
+            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    }
+
+    private func expiryText(_ date: Date?) -> String {
+        guard let date else { return "到期时间未返回" }
+        return "到期 \(date.formatted(date: .numeric, time: .omitted))"
     }
 
     private func deriveOverviewSummary(
@@ -167,6 +293,19 @@ actor EntitlementResolutionService {
         )
     }
 
+    private func makeMiMoLoginRequiredSummary(for descriptor: EntitlementTargetDescriptor) -> EntitlementSummarySnapshot {
+        EntitlementSummarySnapshot.placeholder(
+            targetID: descriptor.targetID,
+            title: descriptor.name,
+            message: "MiMo 登录态不可用。",
+            status: .failed,
+            sourceKind: .mimo,
+            primaryText: "需要重新登录",
+            secondaryText: "请点击添加账号完成小米官方登录",
+            footnote: "不会在后台使用账号密码重试，避免触发风控"
+        )
+    }
+
     private func makeFailedSummary(for descriptor: EntitlementTargetDescriptor, error: any Error) -> EntitlementSummarySnapshot {
         let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         return EntitlementSummarySnapshot.placeholder(
@@ -174,7 +313,7 @@ actor EntitlementResolutionService {
             title: descriptor.name,
             message: "套餐额度刷新失败。",
             status: .failed,
-            sourceKind: .thirdParty,
+            sourceKind: descriptor.id == "mimo" ? .mimo : .thirdParty,
             primaryText: "刷新失败",
             secondaryText: detail.isEmpty ? "未知错误" : detail,
             footnote: "请检查 URL / API Key 或稍后重试"

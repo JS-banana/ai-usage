@@ -39,7 +39,7 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            ForEach(EntitlementPreferences.descriptorTargets(providerPreferences: appState.providerPreferences)) { descriptor in
+            ForEach(EntitlementPreferences.descriptorTargets(providerPreferences: appState.providerPreferences).filter { $0.id != "mimo" }) { descriptor in
                 Section(sectionTitle(for: descriptor)) {
                     Picker("来源", selection: selectedSourceBinding(for: descriptor.targetID)) {
                         Text("未配置").tag(EntitlementSourceSelection.none)
@@ -61,6 +61,10 @@ struct SettingsView: View {
                         SecureField("API Key", text: bridgeAPIKeyBinding(for: descriptor.targetID))
                             .textFieldStyle(.roundedBorder)
                         Text(bridgeDescription(for: descriptor))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .mimo:
+                        Text("MiMo 账号在 MiMo tab 内添加。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     case .none:
@@ -90,7 +94,7 @@ struct SettingsView: View {
 
     private func officialDescription(for descriptor: EntitlementTargetDescriptor) -> String {
         if descriptor.supportsOfficial {
-            return "已为 \(descriptor.name) 选择官方登录态。V1 仅保存选择并展示待接入状态，不会自动回退到第三方额度。"
+            return "已为 \(descriptor.name) 选择官方登录态。"
         }
         return "该目标当前不支持官方套餐额度来源。"
     }
@@ -98,7 +102,7 @@ struct SettingsView: View {
     private func bridgeDescription(for descriptor: EntitlementTargetDescriptor) -> String {
         descriptor.targetID == .overview
             ? "总览可绑定聚合平台的共享额度来源；其配置将优先于派生兜底摘要。"
-            : "每个 provider 只能选择一个额度来源。第三方 API 会作为该 tab 的唯一套餐真值。"
+            : "每个 provider 只能选择一个额度来源。第三方 API 会作为该 tab 的套餐真值。"
     }
 
     private func selectedSourceBinding(for targetID: EntitlementTargetID) -> Binding<EntitlementSourceSelection> {

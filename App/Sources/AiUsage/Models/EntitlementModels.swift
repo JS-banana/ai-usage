@@ -26,6 +26,7 @@ enum EntitlementSourceSelection: String, CaseIterable, Identifiable, Sendable {
     case none
     case official
     case thirdParty
+    case mimo
 
     var id: String { rawValue }
 }
@@ -33,6 +34,7 @@ enum EntitlementSourceSelection: String, CaseIterable, Identifiable, Sendable {
 enum EntitlementSourceKind: String, Hashable, Sendable {
     case official
     case thirdParty
+    case mimo
 }
 
 enum EntitlementSummaryStatus: String, Hashable, Sendable {
@@ -67,6 +69,25 @@ struct EntitlementWindowSnapshot: Identifiable, Hashable, Sendable {
     let secondaryText: String
     let footnoteText: String
     let progress: Double?
+
+    var isVisible: Bool {
+        title.isEmpty == false
+            || primaryText.isEmpty == false
+            || secondaryText.isEmpty == false
+            || footnoteText.isEmpty == false
+            || progress != nil
+    }
+
+    static func hidden(id: String) -> EntitlementWindowSnapshot {
+        EntitlementWindowSnapshot(
+            id: id,
+            title: "",
+            primaryText: "",
+            secondaryText: "",
+            footnoteText: "",
+            progress: nil
+        )
+    }
 }
 
 struct EntitlementSummarySnapshot: Hashable, Sendable {
@@ -82,6 +103,10 @@ struct EntitlementSummarySnapshot: Hashable, Sendable {
     let secondaryWindow: EntitlementWindowSnapshot
 
     var isDerived: Bool { provenance == .derived }
+
+    var visibleWindows: [EntitlementWindowSnapshot] {
+        [primaryWindow, secondaryWindow].filter(\.isVisible)
+    }
 
     static func placeholder(
         targetID: EntitlementTargetID,
