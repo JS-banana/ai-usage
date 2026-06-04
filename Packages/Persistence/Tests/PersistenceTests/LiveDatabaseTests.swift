@@ -33,6 +33,120 @@ final class LiveDatabaseTests: XCTestCase {
         XCTAssertTrue(tableNames.contains(TableNames.accountDiagnostics))
     }
 
+    func testPersistsAndReadsLatestQuotaSnapshot() async throws {
+        let (database, _) = try makeDatabase()
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        let olderSnapshot = ProviderQuotaSnapshot(
+            account: ProviderAccount(
+                id: "mimo-account-1",
+                providerID: "mimo",
+                accountLabel: "MiMo",
+                backendLabel: "xiaomi",
+                createdAt: capturedAt,
+                updatedAt: capturedAt
+            ),
+            snapshot: QuotaSnapshot(
+                id: "snapshot-old",
+                accountID: "mimo-account-1",
+                refreshRunID: nil,
+                capturedAt: capturedAt,
+                freshnessDate: capturedAt,
+                isStale: true
+            ),
+            windows: [
+                AllowanceWindow(
+                    id: "window-old",
+                    snapshotID: "snapshot-old",
+                    kind: .monthly,
+                    used: 10,
+                    limit: 100,
+                    remaining: 90,
+                    resetsAt: nil
+                )
+            ]
+        )
+        let newerSnapshot = ProviderQuotaSnapshot(
+            account: ProviderAccount(
+                id: "mimo-account-1",
+                providerID: "mimo",
+                accountLabel: "MiMo",
+                backendLabel: "xiaomi",
+                createdAt: capturedAt,
+                updatedAt: capturedAt.addingTimeInterval(60)
+            ),
+            snapshot: QuotaSnapshot(
+                id: "snapshot-new",
+                accountID: "mimo-account-1",
+                refreshRunID: nil,
+                capturedAt: capturedAt.addingTimeInterval(60),
+                freshnessDate: capturedAt.addingTimeInterval(60),
+                isStale: false
+            ),
+            windows: [
+                AllowanceWindow(
+                    id: "window-new",
+                    snapshotID: "snapshot-new",
+                    kind: .monthly,
+                    used: 25,
+                    limit: 100,
+                    remaining: 75,
+                    resetsAt: capturedAt.addingTimeInterval(3_600)
+                )
+            ]
+        )
+
+        try await database.persistQuotaSnapshot(olderSnapshot)
+        try await database.persistQuotaSnapshot(newerSnapshot)
+
+        let latest = try await database.latestQuotaSnapshot(providerID: "mimo", accountID: "mimo-account-1")
+
+        XCTAssertEqual(latest?.snapshot.id, "snapshot-new")
+        XCTAssertEqual(latest?.account.providerID, "mimo")
+        XCTAssertEqual(latest?.windows.first?.kind, .monthly)
+        XCTAssertEqual(latest?.windows.first?.used, 25)
+        XCTAssertEqual(latest?.windows.first?.remaining, 75)
+    }
+
+    func testQuotaOnlyProviderDoesNotAppearInSourceHealthOverview() async throws {
+        let (database, _) = try makeDatabase()
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        try await database.persistQuotaSnapshot(
+            ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: "mimo-account-1",
+                    providerID: "mimo",
+                    accountLabel: "MiMo",
+                    backendLabel: "xiaomi",
+                    createdAt: capturedAt,
+                    updatedAt: capturedAt
+                ),
+                snapshot: QuotaSnapshot(
+                    id: "snapshot-1",
+                    accountID: "mimo-account-1",
+                    refreshRunID: nil,
+                    capturedAt: capturedAt,
+                    freshnessDate: capturedAt,
+                    isStale: false
+                ),
+                windows: [
+                    AllowanceWindow(
+                        id: "window-1",
+                        snapshotID: "snapshot-1",
+                        kind: .monthly,
+                        used: 25,
+                        limit: 100,
+                        remaining: 75,
+                        resetsAt: nil
+                    )
+                ]
+            )
+        )
+
+        let health = try await database.sourceHealthOverview()
+
+        XCTAssertFalse(health.contains { $0.id == "mimo" })
+    }
+
     func testAppSupportConfigurationUsesAiUsageDirectoryWhenFresh() throws {
         let appSupportURL = try makeTemporaryDirectory()
 
