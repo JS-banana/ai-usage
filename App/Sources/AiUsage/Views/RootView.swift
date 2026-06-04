@@ -20,7 +20,11 @@ struct RootView: View {
             if showInlineLogin && currentProviderSupportsAccounts {
                 inlineLoginForm
             }
-            summaryCard
+            if appState.selectedTabID == "quota" {
+                quotaCard
+            } else {
+                summaryCard
+            }
             actionToolbar
             statusRow
         }
@@ -91,6 +95,21 @@ struct RootView: View {
             } else {
                 SectionEmptyState(title: "暂无来源数据", message: "在下方添加或启用账号来源后，这里会显示统计。")
             }
+        }
+    }
+
+    private var quotaCard: some View {
+        PanelCard {
+            QuotaManagementView(
+                groups: appState.quotaGroups,
+                selectedMenuBarTarget: appState.menuBarTargetPreference,
+                setMenuBarTarget: { appState.setMenuBarTargetPreference($0) },
+                refresh: { Task { await appState.refreshCurrentEntitlement() } },
+                addMiMoAccount: {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "mimo-login")
+                }
+            )
         }
     }
 
@@ -165,7 +184,7 @@ struct RootView: View {
                     openWindow(id: "detail")
                 }
                 ActionListRow(title: "设置", systemImage: "gearshape") {
-                    openSettings()
+                    openSettingsFrontmost()
                 }
                 ActionListRow(title: "关于 AiUsage", systemImage: "info.circle") {
                     showAbout()
@@ -213,6 +232,16 @@ struct RootView: View {
     private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
+    private func openSettingsFrontmost() {
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+        DispatchQueue.main.async {
+            NSApp.windows
+                .filter { $0.title.localizedCaseInsensitiveContains("设置") || $0.title.localizedCaseInsensitiveContains("settings") }
+                .forEach { $0.orderFrontRegardless() }
+        }
     }
 }
 

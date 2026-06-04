@@ -24,7 +24,17 @@ struct ProviderDetailView: View {
                     }
                 }
 
-                if appState.selectedTabID == "overview", let overview = appState.overviewPanel {
+                if appState.selectedTabID == "quota" {
+                    PanelDetailCard(title: "账号额度") {
+                        QuotaManagementView(
+                            groups: appState.quotaGroups,
+                            selectedMenuBarTarget: appState.menuBarTargetPreference,
+                            setMenuBarTarget: { appState.setMenuBarTargetPreference($0) },
+                            refresh: { Task { await appState.refreshCurrentEntitlement() } },
+                            addMiMoAccount: {}
+                        )
+                    }
+                } else if appState.selectedTabID == "overview", let overview = appState.overviewPanel {
                     HStack(spacing: 16) {
                         DetailMetricCard(title: "今日", value: CompactNumberFormatting.fullString(overview.todayTokens))
                         DetailMetricCard(title: "本周", value: CompactNumberFormatting.fullString(overview.sevenDayTokens))
