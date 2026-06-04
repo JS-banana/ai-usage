@@ -28,19 +28,30 @@ struct QuotaSummarySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
             if summary.status == .failed {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("套餐额度暂不可用")
-                        .font(.subheadline.weight(.semibold))
-                    Text(summary.message)
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .foregroundStyle(.orange)
+                    Text(summary.primaryWindow.primaryText.isEmpty ? "额度刷新失败" : summary.primaryWindow.primaryText)
+                        .font(.caption.weight(.semibold))
+                    if summary.message.isEmpty == false {
+                        Text(summary.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
             } else {
                 let windows = summary.visibleWindows
-                HStack(spacing: 8) {
-                    ForEach(windows) { window in
-                        CompactQuotaWindowCard(window: window, compact: compact)
+                if windows.isEmpty == false {
+                    VStack(spacing: 8) {
+                        ForEach(Array(windows.chunked(into: 2).enumerated()), id: \.offset) { _, row in
+                            HStack(spacing: 8) {
+                                ForEach(row) { window in
+                                    CompactQuotaWindowCard(window: window, compact: compact)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -54,23 +65,38 @@ private struct CompactQuotaWindowCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 6 : 8) {
-            Text(window.title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            QuotaProgressTrack(progress: window.progress, compact: compact)
-
-            Text(window.primaryText)
-                .font(compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            if window.secondaryText.isEmpty == false {
-                Text(window.secondaryText)
-                    .font(.caption2)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(window.title)
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+                Spacer(minLength: 8)
+                if window.detailText.isEmpty == false {
+                    Text(window.detailText)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+            }
+
+            if window.progress != nil {
+                QuotaProgressTrack(progress: window.progress, compact: compact)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(window.primaryText)
+                    .font(compact ? .caption.weight(.semibold) : .subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if window.secondaryText.isEmpty == false {
+                    Text(window.secondaryText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
             }
 
             if window.footnoteText.isEmpty == false {
@@ -118,6 +144,15 @@ private extension QuotaProgressRiskLevel {
             return .orange
         case .red:
             return .red
+        }
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
         }
     }
 }

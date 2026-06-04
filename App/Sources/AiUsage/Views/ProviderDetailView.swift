@@ -10,7 +10,16 @@ struct ProviderDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let entitlementSummary = displayedEntitlementSummary {
-                    PanelDetailCard(title: "套餐额度") {
+                    PanelDetailCard(title: "套餐额度", trailing: {
+                        Button {
+                            Task { await appState.refreshCurrentEntitlement() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("刷新套餐额度")
+                        .disabled(appState.isEntitlementRefreshInProgress)
+                    }) {
                         QuotaSummarySection(summary: entitlementSummary)
                     }
                 }
@@ -96,14 +105,38 @@ private struct DetailMetricCard: View {
     }
 }
 
-private struct PanelDetailCard<Content: View>: View {
+private struct PanelDetailCard<Trailing: View, Content: View>: View {
     let title: String
+    @ViewBuilder let trailing: Trailing
     @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.trailing = trailing()
+        self.content = content()
+    }
+
+    init(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) where Trailing == EmptyView {
+        self.title = title
+        self.trailing = EmptyView()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                trailing
+            }
             content
         }
         .padding(18)

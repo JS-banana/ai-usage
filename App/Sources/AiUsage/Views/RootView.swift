@@ -56,13 +56,21 @@ struct RootView: View {
     private func entitlementSummaryCard(_ summary: EntitlementSummarySnapshot) -> some View {
         PanelCard {
             VStack(alignment: .leading, spacing: 8) {
-                QuotaSummarySection(summary: summary, compact: true)
-                if summary.status == .failed {
-                    Button("重新配置额度") {
-                        openSettings()
+                HStack {
+                    Text("套餐额度")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        Task { await appState.refreshCurrentEntitlement() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(.borderless)
+                    .help("刷新套餐额度")
+                    .disabled(appState.isEntitlementRefreshInProgress)
                 }
+                QuotaSummarySection(summary: summary, compact: true)
             }
         }
     }
@@ -148,6 +156,11 @@ struct RootView: View {
                 ActionListRow(title: appState.isLoading ? "刷新中…" : "刷新", systemImage: "arrow.clockwise") {
                     Task { await appState.refresh() }
                 }
+                if currentProviderSupportsAccounts {
+                    ActionListRow(title: "刷新额度", systemImage: "gauge.with.dots.needle.bottom.50percent") {
+                        Task { await appState.refreshCurrentEntitlement() }
+                    }
+                }
                 ActionListRow(title: "Dashboard", systemImage: "rectangle.grid.2x2") {
                     openWindow(id: "detail")
                 }
@@ -175,7 +188,8 @@ struct RootView: View {
         if appState.statusMessage.hasPrefix("启动失败") || appState.statusMessage.hasPrefix("刷新失败") {
             return .red
         }
-        if appState.statusMessage.localizedCaseInsensitiveContains("Quota 刷新失败") {
+        if appState.statusMessage.localizedCaseInsensitiveContains("Quota 刷新失败")
+            || appState.statusMessage.localizedCaseInsensitiveContains("额度刷新失败") {
             return .orange
         }
         return .secondary

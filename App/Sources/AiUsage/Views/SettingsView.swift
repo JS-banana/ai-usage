@@ -78,9 +78,9 @@ struct SettingsView: View {
                     }
 
                     Button("立即刷新") {
-                        Task { await appState.refresh() }
+                        Task { await appState.refreshCurrentEntitlement() }
                     }
-                    .disabled(appState.isLoading)
+                    .disabled(appState.isEntitlementRefreshInProgress)
                 }
             }
         }
@@ -110,7 +110,7 @@ struct SettingsView: View {
             get: { EntitlementPreferences.selectedSourceBindingValue(for: targetID) },
             set: { newValue in
                 EntitlementPreferences.setSelectedSource(newValue, for: targetID)
-                Task { await appState.refresh() }
+                Task { await appState.refreshCurrentEntitlement() }
             }
         )
     }
