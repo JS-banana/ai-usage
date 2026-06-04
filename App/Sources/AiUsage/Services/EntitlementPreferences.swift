@@ -1,10 +1,23 @@
 import Foundation
 import LocalAuthentication
+import ProviderKit
 import Security
 
 enum EntitlementPreferences {
     private static let prefix = "entitlement.target."
     private static let legacyOverviewMigrationKey = "entitlement.target.overview.legacyMigrated"
+    private static let menuBarTargetPreferenceKey = "entitlement.menuBar.target"
+
+    static func menuBarTargetPreference(userDefaults: UserDefaults = .standard) -> QuotaMenuBarTargetPreference {
+        QuotaMenuBarTargetPreference(storageValue: userDefaults.string(forKey: menuBarTargetPreferenceKey))
+    }
+
+    static func setMenuBarTargetPreference(
+        _ preference: QuotaMenuBarTargetPreference,
+        userDefaults: UserDefaults = .standard
+    ) {
+        userDefaults.set(preference.storageValue, forKey: menuBarTargetPreferenceKey)
+    }
 
     static func descriptorTargets(providerPreferences: [ProviderPreferenceSnapshot]) -> [EntitlementTargetDescriptor] {
         [EntitlementTargetDescriptor(targetID: .overview, name: "总览", supportsOfficial: false)] + providerPreferences.map {
@@ -14,6 +27,18 @@ enum EntitlementPreferences {
                 supportsOfficial: supportsOfficialSource(for: .provider($0.id))
             )
         }
+    }
+
+    static func descriptorTargets(providerDescriptors: [ProviderDescriptor]) -> [EntitlementTargetDescriptor] {
+        [EntitlementTargetDescriptor(targetID: .overview, name: "总览", supportsOfficial: false)] + providerDescriptors
+            .filter { $0.capabilities.contains(.accountQuotaSnapshots) }
+            .map {
+                EntitlementTargetDescriptor(
+                    targetID: .provider($0.id),
+                    name: $0.displayName,
+                    supportsOfficial: supportsOfficialSource(for: .provider($0.id))
+                )
+            }
     }
 
     static func configuration(

@@ -32,7 +32,9 @@ final class EntitlementResolutionService: @unchecked Sendable {
 
         for descriptor in descriptors {
             let configuration = EntitlementPreferences.configuration(for: descriptor.targetID, userDefaults: userDefaults)
-            summaries[descriptor.id] = await resolveSummary(for: descriptor, configuration: configuration, trigger: trigger, now: now)
+            let resolved = await resolveSummaryBundle(for: descriptor, configuration: configuration, trigger: trigger, now: now)
+            summaries[descriptor.id] = resolved.summary
+            summaries.merge(resolved.accountSummaries) { _, new in new }
         }
 
         summaries[EntitlementTargetID.overview.storageKey] = deriveOverviewSummary(
@@ -43,6 +45,69 @@ final class EntitlementResolutionService: @unchecked Sendable {
         )
 
         return summaries
+    }
+
+    private struct SummaryBundle: Sendable {
+        let summary: EntitlementSummarySnapshot
+        let accountSummaries: [String: EntitlementSummarySnapshot]
+    }
+
+    private func resolveSummaryBundle(
+        for descriptor: EntitlementTargetDescriptor,
+        configuration: EntitlementTargetConfiguration,
+        trigger: ImportTrigger,
+        now: Date
+    ) async -> SummaryBundle {
+        guard configuration.selectedSource == .mimo else {
+            return SummaryBundle(
+                summary: await resolveSummary(for: descriptor, configuration: configuration, trigger: trigger, now: now),
+                accountSummaries: [:]
+            )
+        }
+        guard let mimoQuota else {
+            return SummaryBundle(summary: makeUnconfiguredSummary(for: descriptor), accountSummaries: [:])
+        }
+        let accounts = EntitlementPreferences.mimoAccounts(userDefaults: userDefaults)
+        guard !accounts.isEmpty else {
+            return SummaryBundle(summary: makeUnconfiguredSummary(for: descriptor), accountSummaries: [:])
+        }
+
+        if trigger != .manual,
+           let fallback = await latestCachedMiMoSummary(accounts: accounts, descriptor: descriptor) {
+            return SummaryBundle(summary: fallback, accountSummaries: [:])
+        }
+
+        var tokens: [UUID: MiMoServiceToken] = [:]
+        for account in accounts {
+            if let token = EntitlementPreferences.mimoServiceToken(forAccount: account.id, userDefaults: userDefaults) {
+                tokens[account.id] = token
+            }
+        }
+
+        if tokens.isEmpty, let fallback = await latestCachedMiMoSummary(accounts: accounts, descriptor: descriptor) {
+            return SummaryBundle(summary: fallback, accountSummaries: [:])
+        }
+
+        guard !tokens.isEmpty else {
+            return SummaryBundle(summary: makeMiMoLoginRequiredSummary(for: descriptor), accountSummaries: [:])
+        }
+
+        let results = await mimoQuota.fetchAll(
+            tokens: tokens,
+            targetID: descriptor.targetID,
+            title: descriptor.name,
+            now: now
+        )
+        let summary = await aggregateMiMoResults(
+            results: results,
+            accounts: accounts,
+            descriptor: descriptor,
+            now: now
+        )
+        return SummaryBundle(
+            summary: summary,
+            accountSummaries: perAccountMiMoSummaries(results: results, accounts: accounts)
+        )
     }
 
     func resolveSummary(
@@ -116,6 +181,33 @@ final class EntitlementResolutionService: @unchecked Sendable {
                 now: now
             )
         }
+    }
+
+    private func perAccountMiMoSummaries(
+        results: [UUID: AccountFetchResult],
+        accounts: [MiMoAccount]
+    ) -> [String: EntitlementSummarySnapshot] {
+        var accountSummaries: [String: EntitlementSummarySnapshot] = [:]
+        let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+        for (accountID, result) in results {
+            guard var snapshot = result.snapshot, let account = accountByID[accountID] else { continue }
+            snapshot = EntitlementSummarySnapshot(
+                targetID: snapshot.targetID,
+                title: account.displayName,
+                message: snapshot.message,
+                updatedAt: snapshot.updatedAt,
+                status: snapshot.status,
+                sourceKind: snapshot.sourceKind,
+                provenance: snapshot.provenance,
+                derivedFromTitle: snapshot.derivedFromTitle,
+                primaryWindow: snapshot.primaryWindow,
+                secondaryWindow: snapshot.secondaryWindow,
+                extraWindows: snapshot.extraWindows,
+                menuBarProgress: snapshot.menuBarProgress
+            )
+            accountSummaries[QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: accountID)] = snapshot
+        }
+        return accountSummaries
     }
 
     private func aggregateMiMoResults(
@@ -336,20 +428,20 @@ final class EntitlementResolutionService: @unchecked Sendable {
         }
 
         let candidates = providerDescriptors
-            .filter { visibleProviderIDs.contains($0.id) }
             .compactMap { summaries[$0.id] }
+            .filter { $0.status != .unconfigured && $0.status != .unavailable }
 
         guard let chosen = candidates.max(by: isLowerPriority(_:than:)) else {
             return EntitlementSummarySnapshot.placeholder(
                 targetID: .overview,
                 title: "总览套餐",
-                message: "未配置总览套餐额度；配置 provider 或总览来源后会显示汇总。",
+                message: "未配置可用套餐额度；在额度 tab 添加账号后会显示汇总。",
                 status: .unconfigured,
                 sourceKind: nil,
                 provenance: .derived,
                 primaryText: "未配置",
                 secondaryText: "暂无可用额度来源",
-                footnote: "可在设置中为总览或 provider 配置套餐来源"
+                footnote: "在额度 tab 管理账号和菜单栏显示目标"
             )
         }
 
@@ -409,7 +501,7 @@ final class EntitlementResolutionService: @unchecked Sendable {
             sourceKind: nil,
             primaryText: "未配置",
             secondaryText: "选择官方或第三方来源",
-            footnote: "设置后可随 active tab 同步展示"
+            footnote: "在额度 tab 管理账号和菜单栏显示目标"
         )
     }
 
