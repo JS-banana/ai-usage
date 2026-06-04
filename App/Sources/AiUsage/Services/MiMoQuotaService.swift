@@ -154,6 +154,9 @@ actor MiMoQuotaService {
         let planLimit = planItem.limit
         let compensationUsed = compensationItem?.used ?? 0
         let compensationLimit = compensationItem?.limit ?? 0
+        let totalUsed = planUsed + compensationUsed
+        let totalLimit = planLimit + compensationLimit
+        let totalProgress = totalLimit > 0 ? Double(totalUsed) / Double(totalLimit) : 0
         let expiresAt: Date?
         if let usageExpiry = decoded.data.expiresAt {
             expiresAt = usageExpiry
@@ -164,25 +167,14 @@ actor MiMoQuotaService {
         let primaryWindow = EntitlementWindowSnapshot(
             id: "\(targetID.storageKey)-mimo-primary",
             title: "套餐总额度",
-            primaryText: percentageText(planItem.percent),
-            secondaryText: tokenUsageText(used: planUsed, limit: planLimit),
-            footnoteText: expiryText(expiresAt),
-            progress: clampedProgress(planItem.percent)
+            detailText: tokenUsageDetailText(used: totalUsed, limit: totalLimit),
+            primaryText: usedPercentText(totalProgress),
+            secondaryText: compactDateText(expiresAt),
+            footnoteText: "",
+            progress: clampedProgress(totalProgress)
         )
 
-        let secondaryWindow: EntitlementWindowSnapshot
-        if let compensationItem, compensationItem.limit > 0 {
-            secondaryWindow = EntitlementWindowSnapshot(
-                id: "\(targetID.storageKey)-mimo-compensation",
-                title: "补偿额度",
-                primaryText: percentageText(compensationItem.percent),
-                secondaryText: tokenUsageText(used: compensationItem.used, limit: compensationItem.limit),
-                footnoteText: expiryText(expiresAt),
-                progress: clampedProgress(compensationItem.percent)
-            )
-        } else {
-            secondaryWindow = .hidden(id: "\(targetID.storageKey)-mimo-compensation")
-        }
+        let secondaryWindow = EntitlementWindowSnapshot.hidden(id: "\(targetID.storageKey)-mimo-compensation")
 
         let snapshot = EntitlementSummarySnapshot(
             targetID: targetID,
@@ -194,7 +186,8 @@ actor MiMoQuotaService {
             provenance: .explicit,
             derivedFromTitle: nil,
             primaryWindow: primaryWindow,
-            secondaryWindow: secondaryWindow
+            secondaryWindow: secondaryWindow,
+            menuBarProgress: clampedProgress(totalProgress)
         )
 
         return FetchAPIResult(
@@ -207,23 +200,8 @@ actor MiMoQuotaService {
         )
     }
 
-    private nonisolated static func percentageText(_ progress: Double) -> String {
-        "已用 \(clampedProgress(progress).formatted(.percent.precision(.fractionLength(0))))"
-    }
-
-    private nonisolated static func tokenUsageText(used: Int, limit: Int) -> String {
-        "\(tokenText(used)) / \(tokenText(limit)) token"
-    }
-
-    private nonisolated static func tokenText(_ value: Int) -> String {
-        let absolute = abs(value)
-        if absolute >= 100_000_000 {
-            return "\(trimmed(Double(value) / 100_000_000))亿"
-        }
-        if absolute >= 10_000 {
-            return "\(trimmed(Double(value) / 10_000))万"
-        }
-        return value.formatted()
+    private nonisolated static func usedPercentText(_ progress: Double) -> String {
+        "\(clampedProgress(progress).formatted(.percent.precision(.fractionLength(0)))) used"
     }
 
     private nonisolated static func trimmed(_ value: Double) -> String {
@@ -232,13 +210,31 @@ actor MiMoQuotaService {
             .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
     }
 
-    private nonisolated static func expiryText(_ date: Date?) -> String {
-        guard let date else { return "到期时间未返回" }
-        return "到期 \(date.formatted(date: .numeric, time: .omitted))"
+    private nonisolated static func compactDateText(_ date: Date?) -> String {
+        guard let date else { return "expires unknown" }
+        return "expires \(date.formatted(date: .numeric, time: .omitted))"
     }
 
     private nonisolated static func clampedProgress(_ progress: Double) -> Double {
         min(max(progress, 0), 1)
+    }
+
+    private nonisolated static func tokenUsageDetailText(used: Int, limit: Int) -> String {
+        "\(compactTokenText(used)) / \(compactTokenText(limit)) tokens"
+    }
+
+    private nonisolated static func compactTokenText(_ value: Int) -> String {
+        let absolute = abs(value)
+        if absolute >= 1_000_000_000 {
+            return "\(trimmed(Double(value) / 1_000_000_000))B"
+        }
+        if absolute >= 1_000_000 {
+            return "\(trimmed(Double(value) / 1_000_000))M"
+        }
+        if absolute >= 1_000 {
+            return "\(trimmed(Double(value) / 1_000))K"
+        }
+        return value.formatted()
     }
 
     private nonisolated static func makeRequest(
@@ -269,6 +265,7 @@ actor MiMoQuotaService {
               response.statusCode == 200 else { return nil }
         return MiMoExpiryFinder.find(in: data)
     }
+
 }
 
 // MARK: - Response Models
@@ -293,6 +290,7 @@ private struct MiMoAPIData: Decodable {
         case endAt
         case endTime
         case endDate
+        case currentPeriodEnd
         case validUntil
         case monthUsage
         case usage
@@ -315,6 +313,7 @@ private struct MiMoAPIData: Decodable {
             .endAt,
             .endTime,
             .endDate,
+            .currentPeriodEnd,
             .validUntil
         ] {
             if let string = try? container.decode(String.self, forKey: key),
@@ -377,6 +376,7 @@ private enum MiMoExpiryFinder {
         "endAt",
         "endTime",
         "endDate",
+        "currentPeriodEnd",
         "validUntil"
     ].map(normalizeKey)
     )
