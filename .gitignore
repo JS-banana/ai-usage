@@ -17,4 +17,9 @@ xcuserdata/
 # macOS Finder metadata
 .DS_Store
 .superset
-docs
+
+# Project docs are mostly local scratch notes, but keep curated references visible.
+docs/*
+!docs/local-mac-validation-guide.md
+!docs/mimo-quota-dev-plan.md
+!docs/refresh-and-entitlement-architecture.md
