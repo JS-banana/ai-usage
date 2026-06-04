@@ -1,11 +1,16 @@
 import Foundation
 
-struct QuotaMenuBarGlyphState: Hashable, Sendable {
-    let leftRatio: Double
-    let rightRatio: Double
-    let isDimmed: Bool
+enum QuotaMenuBarGlyphState: Hashable, Sendable {
+    case dualWindows(leftRatio: Double, rightRatio: Double, isDimmed: Bool)
+    case singlePlan(ratio: Double, isDimmed: Bool)
+    case empty(kind: EmptyKind)
 
-    static let empty = QuotaMenuBarGlyphState(leftRatio: 0.18, rightRatio: 0.18, isDimmed: true)
+    enum EmptyKind: Hashable, Sendable {
+        case dual
+        case single
+    }
+
+    static let empty = QuotaMenuBarGlyphState.empty(kind: .dual)
 }
 
 struct MenuBarSummarySnapshot: Hashable, Sendable {
@@ -87,16 +92,22 @@ struct MenuBarSummaryReadModelService {
     private func glyph(for summary: EntitlementSummarySnapshot) -> QuotaMenuBarGlyphState {
         switch summary.status {
         case .ready, .stale:
-            let windows = summary.visibleWindows
-            let leftProgress = windows.first?.progress ?? 0.18
-            let rightProgress = windows.dropFirst().first?.progress ?? leftProgress
-            return QuotaMenuBarGlyphState(
-                leftRatio: leftProgress,
-                rightRatio: rightProgress,
+            if summary.sourceKind == .mimo {
+                let usedProgress = summary.menuBarProgress ?? summary.primaryWindow.progress
+                return .singlePlan(ratio: remainingRatio(for: usedProgress), isDimmed: false)
+            }
+            return .dualWindows(
+                leftRatio: remainingRatio(for: summary.primaryWindow.progress),
+                rightRatio: remainingRatio(for: summary.secondaryWindow.progress),
                 isDimmed: false
             )
         case .failed, .configuredNonlive, .unconfigured, .unavailable:
-            return .empty
+            return .empty(kind: summary.sourceKind == .mimo ? .single : .dual)
         }
+    }
+
+    private func remainingRatio(for usedProgress: Double?) -> Double {
+        guard let usedProgress else { return 0.18 }
+        return 1 - min(max(usedProgress, 0), 1)
     }
 }

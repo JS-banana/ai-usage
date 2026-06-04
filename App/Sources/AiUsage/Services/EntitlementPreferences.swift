@@ -201,13 +201,12 @@ enum EntitlementPreferences {
     private static let mimoAccountsMirrorKey = "entitlement.mimo.accounts.mirror"
 
     static func mimoAccounts(userDefaults: UserDefaults = .standard) -> [MiMoAccount] {
-        if let data = userDefaults.data(forKey: mimoAccountsMirrorKey),
-           let accounts = try? JSONDecoder().decode([MiMoAccount].self, from: data) {
-            return accounts
-        }
         if let data = readMiMoAccountsKeychain(userDefaults: userDefaults),
            let accounts = try? JSONDecoder().decode([MiMoAccount].self, from: data) {
-            userDefaults.set(data, forKey: mimoAccountsMirrorKey)
+            setMiMoAccountsMirror(accounts, userDefaults: userDefaults)
+            return accounts
+        }
+        if let accounts = readMiMoAccountsMirror(userDefaults: userDefaults) {
             return accounts
         }
         // Migration: if old single-credential exists but accounts does not, migrate
@@ -221,7 +220,7 @@ enum EntitlementPreferences {
 
     static func setMiMoAccounts(_ accounts: [MiMoAccount], userDefaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(accounts) else { return }
-        userDefaults.set(data, forKey: mimoAccountsMirrorKey)
+        setMiMoAccountsMirror(accounts, userDefaults: userDefaults)
         deleteMiMoAccountsKeychain(userDefaults: userDefaults)
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -230,6 +229,32 @@ enum EntitlementPreferences {
             kSecValueData as String: data
         ]
         SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private static func readMiMoAccountsMirror(userDefaults: UserDefaults) -> [MiMoAccount]? {
+        guard let data = userDefaults.data(forKey: mimoAccountsMirrorKey),
+              let mirrors = try? JSONDecoder().decode([MiMoAccountMirror].self, from: data) else {
+            return nil
+        }
+        return mirrors.map { mirror in
+            MiMoAccount(
+                id: mirror.id,
+                credentials: MiMoCredentials(username: mirror.username, passwordMD5: ""),
+                displayName: mirror.displayName
+            )
+        }
+    }
+
+    private static func setMiMoAccountsMirror(_ accounts: [MiMoAccount], userDefaults: UserDefaults) {
+        let mirrors = accounts.map { account in
+            MiMoAccountMirror(
+                id: account.id,
+                username: account.credentials.username,
+                displayName: account.displayName
+            )
+        }
+        guard let data = try? JSONEncoder().encode(mirrors) else { return }
+        userDefaults.set(data, forKey: mimoAccountsMirrorKey)
     }
 
     @discardableResult
@@ -420,4 +445,10 @@ enum EntitlementPreferences {
         item = box.item
         return box.status
     }
+}
+
+private struct MiMoAccountMirror: Codable {
+    let id: UUID
+    let username: String
+    let displayName: String
 }

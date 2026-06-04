@@ -31,6 +31,7 @@ struct AppContainer {
                     thirdPartyService: LaifuyouQuotaService(),
                     officialProbe: OfficialEntitlementProbe(),
                     mimoQuota: MiMoQuotaService(client: URLSessionHTTPClient()),
+                    quotaSnapshotStore: database,
                     userDefaults: .standard
                 ),
                 menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
