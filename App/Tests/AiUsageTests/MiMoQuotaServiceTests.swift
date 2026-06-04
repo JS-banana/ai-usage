@@ -32,14 +32,13 @@ final class MiMoQuotaServiceTests: XCTestCase {
 
         XCTAssertEqual(snapshot.title, "MiMo")
         XCTAssertEqual(snapshot.primaryWindow.title, "套餐总额度")
-        XCTAssertEqual(snapshot.primaryWindow.primaryText, "已用 45%")
-        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("token"))
-        XCTAssertEqual(snapshot.primaryWindow.footnoteText, "到期时间未返回")
-        XCTAssertEqual(snapshot.primaryWindow.progress ?? 0, 0.45, accuracy: 0.001)
+        XCTAssertEqual(snapshot.primaryWindow.detailText, "89.5M / 200M tokens")
+        XCTAssertEqual(snapshot.primaryWindow.primaryText, "45% used")
+        XCTAssertEqual(snapshot.primaryWindow.secondaryText, "expires unknown")
+        XCTAssertEqual(snapshot.primaryWindow.footnoteText, "")
+        XCTAssertEqual(snapshot.primaryWindow.progress ?? 0, 0.4475, accuracy: 0.001)
         XCTAssertFalse(snapshot.secondaryWindow.isVisible)
         XCTAssertEqual(snapshot.sourceKind, .mimo)
-        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("8950.2万"))
-        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("2亿"))
     }
 
     func testFetchShowsCompensationWindowWhenCompensationHasLimit() async throws {
@@ -68,15 +67,73 @@ final class MiMoQuotaServiceTests: XCTestCase {
         let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
 
         XCTAssertEqual(snapshot.primaryWindow.title, "套餐总额度")
-        XCTAssertEqual(snapshot.primaryWindow.primaryText, "已用 0%")
-        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("0 / 110亿 token"))
-        XCTAssertEqual(snapshot.secondaryWindow.title, "补偿额度")
-        XCTAssertEqual(snapshot.secondaryWindow.primaryText, "已用 42%")
-        XCTAssertTrue(snapshot.secondaryWindow.secondaryText.contains("13.84亿"))
-        XCTAssertTrue(snapshot.secondaryWindow.secondaryText.contains("32.86亿"))
-        XCTAssertEqual(snapshot.secondaryWindow.footnoteText, "到期时间未返回")
-        XCTAssertEqual(snapshot.secondaryWindow.progress ?? 0, 0.42, accuracy: 0.001)
-        XCTAssertTrue(snapshot.secondaryWindow.isVisible)
+        XCTAssertEqual(snapshot.primaryWindow.detailText, "1.38B / 14.29B tokens")
+        XCTAssertEqual(snapshot.primaryWindow.primaryText, "10% used")
+        XCTAssertEqual(snapshot.primaryWindow.secondaryText, "expires unknown")
+        XCTAssertEqual(snapshot.primaryWindow.footnoteText, "")
+        XCTAssertEqual(snapshot.primaryWindow.progress ?? 0, 0.097, accuracy: 0.001)
+        XCTAssertEqual(snapshot.menuBarProgress ?? 0, 0.097, accuracy: 0.001)
+        XCTAssertFalse(snapshot.secondaryWindow.isVisible)
+    }
+
+    func testFetchDoesNotRequestOrShowAccountBalanceWhenBalanceEndpointExists() async throws {
+        let usageJSON = standardJSON(monthPercent: 0.1, planPercent: 0.2)
+        let detailJSON = #"{"code":0,"data":{"tokenPlan":{"expireTime":"2026-08-15 23:59:59"}}}"#
+        let balanceJSON = """
+        {
+            "balance": "5.00",
+            "frozenBalance": "0.00",
+            "currency": "CNY",
+            "overdraftLimit": "0.00",
+            "remainingOverdraftLimit": "0.00",
+            "giftBalance": "5.00",
+            "cashBalance": "0.00"
+        }
+        """
+        let mock = MockQuotaHTTPClient(responseJSON: usageJSON)
+        mock.enqueueResponses([usageJSON, detailJSON, balanceJSON])
+        let service = MiMoQuotaService(client: mock)
+
+        let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
+        let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
+
+        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, [
+            "/api/v1/tokenPlan/usage",
+            "/api/v1/tokenPlan/detail"
+        ])
+        XCTAssertNil(snapshot.visibleWindows.first { $0.title == "账户余额" })
+    }
+
+    func testFetchFormatsMiMoCompactPlanAsUsedAndExpiryOnly() async throws {
+        let usageJSON = standardJSON(monthPercent: 0.1, planPercent: 0.2)
+        let detailJSON = #"{"code":0,"data":{"currentPeriodEnd":"2026-06-27 23:59:59"}}"#
+        let mock = MockQuotaHTTPClient(responseJSON: usageJSON)
+        mock.enqueueResponses([usageJSON, detailJSON])
+        let service = MiMoQuotaService(client: mock)
+
+        let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
+        let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
+
+        XCTAssertEqual(snapshot.primaryWindow.detailText, "100 / 200 tokens")
+        XCTAssertEqual(snapshot.primaryWindow.primaryText, "50% used")
+        XCTAssertEqual(snapshot.primaryWindow.secondaryText, "expires 2026/6/27")
+        XCTAssertEqual(snapshot.primaryWindow.footnoteText, "")
+    }
+
+    func testFetchDoesNotRequestBalanceWhenTokenPlanDetailFails() async throws {
+        let usageJSON = standardJSON(monthPercent: 0.1, planPercent: 0.2)
+        let mock = MockQuotaHTTPClient(responseJSON: usageJSON)
+        mock.enqueueResponses([(usageJSON, 200), ("{}", 500)])
+        let service = MiMoQuotaService(client: mock)
+
+        let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
+        let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
+
+        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, [
+            "/api/v1/tokenPlan/usage",
+            "/api/v1/tokenPlan/detail"
+        ])
+        XCTAssertNil(snapshot.visibleWindows.first { $0.title == "账户余额" })
     }
 
     func testFetchMapsExpiryWhenResponseProvidesExpireAt() async throws {
@@ -104,8 +161,8 @@ final class MiMoQuotaServiceTests: XCTestCase {
         let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
         let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
 
-        XCTAssertTrue(snapshot.primaryWindow.footnoteText.contains("到期"))
-        XCTAssertFalse(snapshot.primaryWindow.footnoteText.contains("未返回"))
+        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("2026"))
+        XCTAssertFalse(snapshot.primaryWindow.secondaryText.contains("unknown"))
     }
 
     func testFetchUsesTokenPlanDetailExpiryWhenUsageHasNoExpiry() async throws {
@@ -118,9 +175,12 @@ final class MiMoQuotaServiceTests: XCTestCase {
         let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
         let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
 
-        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, ["/api/v1/tokenPlan/usage", "/api/v1/tokenPlan/detail"])
-        XCTAssertTrue(snapshot.primaryWindow.footnoteText.contains("到期"))
-        XCTAssertFalse(snapshot.primaryWindow.footnoteText.contains("未返回"))
+        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, [
+            "/api/v1/tokenPlan/usage",
+            "/api/v1/tokenPlan/detail"
+        ])
+        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("2026"))
+        XCTAssertFalse(snapshot.primaryWindow.secondaryText.contains("unknown"))
     }
 
     func testFetchUsesTokenPlanDetailExpiryFromExpireTimeField() async throws {
@@ -133,9 +193,30 @@ final class MiMoQuotaServiceTests: XCTestCase {
         let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
         let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
 
-        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, ["/api/v1/tokenPlan/usage", "/api/v1/tokenPlan/detail"])
-        XCTAssertTrue(snapshot.primaryWindow.footnoteText.contains("2026"))
-        XCTAssertFalse(snapshot.primaryWindow.footnoteText.contains("未返回"))
+        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, [
+            "/api/v1/tokenPlan/usage",
+            "/api/v1/tokenPlan/detail"
+        ])
+        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("2026"))
+        XCTAssertFalse(snapshot.primaryWindow.secondaryText.contains("unknown"))
+    }
+
+    func testFetchUsesTokenPlanDetailExpiryFromCurrentPeriodEndField() async throws {
+        let usageJSON = standardJSON(monthPercent: 0.1, planPercent: 0.2)
+        let detailJSON = #"{"code":0,"data":{"currentPeriodEnd":"2026-07-31T23:59:59+08:00","planCode":"mimo_api_pro","planName":"Pro"}}"#
+        let mock = MockQuotaHTTPClient(responseJSON: usageJSON)
+        mock.enqueueResponses([usageJSON, detailJSON])
+        let service = MiMoQuotaService(client: mock)
+
+        let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
+        let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
+
+        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, [
+            "/api/v1/tokenPlan/usage",
+            "/api/v1/tokenPlan/detail"
+        ])
+        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("2026"))
+        XCTAssertFalse(snapshot.primaryWindow.secondaryText.contains("unknown"))
     }
 
     func testFetchUsesTokenPlanDetailExpiryFromSnakeCaseMillisecondTimestamp() async throws {
@@ -148,9 +229,12 @@ final class MiMoQuotaServiceTests: XCTestCase {
         let token = MiMoServiceToken(serviceToken: "tok", userId: "u", slh: "s", ph: "p", acquiredAt: Date())
         let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
 
-        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, ["/api/v1/tokenPlan/usage", "/api/v1/tokenPlan/detail"])
-        XCTAssertTrue(snapshot.primaryWindow.footnoteText.contains("2026"))
-        XCTAssertFalse(snapshot.primaryWindow.footnoteText.contains("未返回"))
+        XCTAssertEqual(mock.capturedRequests.map { $0.url?.path }, [
+            "/api/v1/tokenPlan/usage",
+            "/api/v1/tokenPlan/detail"
+        ])
+        XCTAssertTrue(snapshot.primaryWindow.secondaryText.contains("2026"))
+        XCTAssertFalse(snapshot.primaryWindow.secondaryText.contains("unknown"))
     }
 
     func testFetchKeepsUsageWhenTokenPlanDetailFails() async throws {
@@ -163,7 +247,8 @@ final class MiMoQuotaServiceTests: XCTestCase {
         let snapshot = try await service.fetch(serviceToken: token, targetID: .provider("mimo"), title: "MiMo", now: Date())
 
         XCTAssertEqual(snapshot.primaryWindow.title, "套餐总额度")
-        XCTAssertEqual(snapshot.primaryWindow.footnoteText, "到期时间未返回")
+        XCTAssertEqual(snapshot.primaryWindow.secondaryText, "expires unknown")
+        XCTAssertEqual(snapshot.primaryWindow.footnoteText, "")
     }
 
     func testFetchSetsStatusReadyWhenTokenFresh() async throws {

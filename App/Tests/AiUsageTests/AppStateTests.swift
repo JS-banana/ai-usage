@@ -52,6 +52,115 @@ final class AppStateTests: XCTestCase {
         XCTAssertFalse(state.isAutoRefreshActive)
     }
 
+    func testAutoRefreshStartIsIdempotent() async throws {
+        let importRunner = CountingImportRunnerStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: EmptyEntitlementResolverStub(),
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            ),
+            refreshPolicy: RefreshPolicy(usageTTL: 0, entitlementTTL: 10_000, schedulerTick: 0.2)
+        )
+        state.lastEntitlementRefresh = Date()
+
+        state.startAutoRefresh(intervalSeconds: 0.2)
+        try await Task.sleep(for: .seconds(0.15))
+        state.startAutoRefresh(intervalSeconds: 0.2)
+        try await Task.sleep(for: .seconds(0.12))
+
+        XCTAssertEqual(importRunner.runCount, 1)
+        state.cancelAutoRefresh()
+    }
+
+    func testRefreshOnBecomeActiveDoesNotRefreshUsageOrEntitlements() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = CountingEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+
+        await state.refreshOnBecomeActive()
+
+        XCTAssertEqual(importRunner.runCount, 0)
+        XCTAssertEqual(entitlementResolver.resolveCallCount, 0)
+    }
+
+    func testRefreshIfStaleSeparatesUsageAndEntitlementTTL() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = CountingEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            ),
+            refreshPolicy: RefreshPolicy(usageTTL: 600, entitlementTTL: 1800)
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        state.lastUsageRefresh = now.addingTimeInterval(-601)
+        state.lastEntitlementRefresh = now.addingTimeInterval(-120)
+
+        await state.refreshIfStale(now: now)
+
+        XCTAssertEqual(importRunner.runCount, 1)
+        XCTAssertEqual(entitlementResolver.resolveCallCount, 0)
+        XCTAssertNotNil(state.lastUsageRefresh)
+        XCTAssertEqual(state.lastEntitlementRefresh, now.addingTimeInterval(-120))
+    }
+
+    func testRefreshCurrentEntitlementDoesNotRunUsageImport() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = CountingEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+
+        await state.refreshCurrentEntitlement()
+
+        XCTAssertEqual(importRunner.runCount, 0)
+        XCTAssertEqual(entitlementResolver.resolveCallCount, 1)
+    }
+
+    func testRefreshCurrentEntitlementCanRunWhileUsageRefreshIsSuspended() async {
+        SuspendedImportRunnerStub.reset()
+        let entitlementResolver = CountingEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: SuspendedImportRunnerStub(),
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+
+        let usageTask = Task {
+            await state.refreshUsage(trigger: .background)
+        }
+        await SuspendedImportRunnerStub.waitUntilSuspended()
+
+        let didRefreshEntitlement = await state.refreshCurrentEntitlement()
+
+        XCTAssertTrue(didRefreshEntitlement)
+        XCTAssertEqual(entitlementResolver.resolveCallCount, 1)
+        XCTAssertEqual(state.usageRefreshState, .refreshing)
+
+        SuspendedImportRunnerStub.resume()
+        _ = await usageTask.value
+    }
+
     func testMarkMiMoLoginCompletedAdvancesSequence() {
         let state = AppState(
             dataService: AppDataService(
@@ -111,6 +220,28 @@ private enum BootstrapTestError: LocalizedError {
 private struct CancelledImportRunnerStub: ImportRunning {
     func runImport(request: ImportRequest) async throws -> ImportResult {
         throw CancellationError()
+    }
+}
+
+private final class CountingImportRunnerStub: ImportRunning, @unchecked Sendable {
+    private(set) var runCount = 0
+
+    func runImport(request: ImportRequest) async throws -> ImportResult {
+        runCount += 1
+        return ImportResult(
+            run: ImportRun(
+                id: "run-\(request.trigger.rawValue)",
+                startedAt: request.startedAt,
+                finishedAt: request.startedAt,
+                status: .succeeded,
+                trigger: request.trigger,
+                totalFiles: 0,
+                totalEvents: 0,
+                totalSessions: 0,
+                skippedRecords: 0
+            ),
+            sourceResults: []
+        )
     }
 }
 
@@ -221,8 +352,23 @@ private struct EmptyEntitlementResolverStub: EntitlementResolving {
     func resolveSummaries(
         descriptors: [EntitlementTargetDescriptor],
         visibleProviderIDs: Set<String>,
+        trigger: ImportTrigger,
         now: Date
     ) async -> [String: EntitlementSummarySnapshot] {
         [:]
+    }
+}
+
+private final class CountingEntitlementResolverStub: EntitlementResolving, @unchecked Sendable {
+    private(set) var resolveCallCount = 0
+
+    func resolveSummaries(
+        descriptors: [EntitlementTargetDescriptor],
+        visibleProviderIDs: Set<String>,
+        trigger: ImportTrigger,
+        now: Date
+    ) async -> [String: EntitlementSummarySnapshot] {
+        resolveCallCount += 1
+        return [:]
     }
 }

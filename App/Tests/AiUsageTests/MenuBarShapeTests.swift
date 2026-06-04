@@ -18,12 +18,34 @@ final class MenuBarShapeTests: XCTestCase {
 
     func testRenderedMenuBarImageIsTemplateAndSizedForStatusBar() {
         let image = QuotaMenuBarImageRenderer().image(
-            for: QuotaMenuBarGlyphState(leftRatio: 0.25, rightRatio: 0.6, isDimmed: false)
+            for: QuotaMenuBarGlyphState.dualWindows(leftRatio: 0.25, rightRatio: 0.6, isDimmed: false)
         )
 
         XCTAssertEqual(image.size.width, 18)
         XCTAssertEqual(image.size.height, 18)
         XCTAssertTrue(image.isTemplate)
+    }
+
+    func testRenderedMenuBarImageDrawsTrackAndFillForDualWindows() {
+        let renderer = QuotaMenuBarImageRenderer()
+        let image = renderer.image(for: .dualWindows(leftRatio: 0.86, rightRatio: 0.42, isDimmed: false))
+
+        XCTAssertTrue(visibleAlphas(image).contains { $0 > 0.9 })
+        XCTAssertTrue(visibleAlphas(image).contains { $0 > 0.15 && $0 < 0.5 })
+        XCTAssertEqual(alphaColumnRuns(image, y: 8).count, 2)
+    }
+
+    func testRenderedMenuBarImageDrawsSingleMiMoTankWithTrackContrast() {
+        let renderer = QuotaMenuBarImageRenderer()
+        let single = renderer.image(for: .singlePlan(ratio: 0.84, isDimmed: false))
+        let dual = renderer.image(for: .dualWindows(leftRatio: 0.84, rightRatio: 0.84, isDimmed: false))
+
+        let singleRuns = alphaColumnRuns(single, y: 8)
+        XCTAssertEqual(singleRuns.count, 1)
+        XCTAssertGreaterThanOrEqual(singleRuns.first?.count ?? 0, 8)
+        XCTAssertLessThan(visibleAlphaBounds(single).width, visibleAlphaBounds(dual).width)
+        XCTAssertTrue(visibleAlphas(single).contains { $0 > 0.9 })
+        XCTAssertTrue(visibleAlphas(single).contains { $0 > 0.15 && $0 < 0.5 })
     }
 
     func testRootViewSourceShowsActiveEntitlementAndCompactActions() throws {
@@ -45,12 +67,14 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertFalse(source.contains("CompactActionButton"))
         XCTAssertFalse(source.contains("管理账号"))
         XCTAssertFalse(source.contains("Quota Targets"))
+        XCTAssertFalse(source.contains("重新配置额度"))
     }
 
     func testAppShellUsesRenderedTemplateImageForMenuBarExtra() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/AiUsageApp.swift")
         XCTAssertTrue(source.contains("QuotaMenuBarImageRenderer"))
         XCTAssertTrue(source.contains("Image(nsImage:"))
+        XCTAssertTrue(source.contains(".id(appState.menuBarSummary.glyph)"))
         XCTAssertFalse(source.contains("chart.bar.xaxis"))
     }
 
@@ -102,18 +126,44 @@ final class MenuBarShapeTests: XCTestCase {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaSummaryViews.swift")
         XCTAssertTrue(source.contains("QuotaProgressRiskLevel"))
         XCTAssertTrue(source.contains("summary.visibleWindows"))
-        XCTAssertTrue(source.contains("ForEach(windows)"))
+        XCTAssertTrue(source.contains("chunked(into: 2)"))
+        XCTAssertTrue(source.contains("ForEach(Array(windows.chunked"))
+        XCTAssertTrue(source.contains("ForEach(row)"))
+        XCTAssertTrue(source.contains("HStack(alignment: .firstTextBaseline"))
+        XCTAssertTrue(source.contains("window.detailText"))
+        XCTAssertTrue(source.contains("if window.progress != nil"))
         XCTAssertFalse(source.contains("summary.fiveHour"))
         XCTAssertFalse(source.contains("summary.weekly"))
         XCTAssertFalse(source.contains("Text(summary.title)"))
         XCTAssertTrue(source.contains("window.secondaryText"))
     }
 
-    func testMenuBarGlyphUsesVisibleWindowProgress() throws {
+    func testEntitlementSummarySupportsExtraWindows() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Models/EntitlementModels.swift")
+        XCTAssertTrue(source.contains("let extraWindows: [EntitlementWindowSnapshot]"))
+        XCTAssertTrue(source.contains("extraWindows: [EntitlementWindowSnapshot] = []"))
+        XCTAssertTrue(source.contains("detailText: String = \"\""))
+        XCTAssertTrue(source.contains("([primaryWindow, secondaryWindow] + extraWindows).filter"))
+    }
+
+    func testMenuBarRendererDrawsLowAlphaCapacityTrack() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/MenuBar/QuotaMenuBarImageRenderer.swift")
+        XCTAssertTrue(source.contains("drawTrack"))
+        XCTAssertTrue(source.contains("trackAlpha"))
+        XCTAssertTrue(source.contains("fillAlpha"))
+        XCTAssertTrue(source.contains("singlePlan"))
+    }
+
+    func testMenuBarGlyphStateIsSchemaAware() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Services/MenuBarSummaryReadModelService.swift")
-        XCTAssertTrue(source.contains("summary.visibleWindows"))
-        XCTAssertTrue(source.contains("rightRatio: rightProgress"))
-        XCTAssertFalse(source.contains("summary.secondaryWindow.progress ?? 0.18"))
+        XCTAssertTrue(source.contains("enum QuotaMenuBarGlyphState"))
+        XCTAssertTrue(source.contains("case singlePlan"))
+        XCTAssertTrue(source.contains("case dualWindows"))
+        XCTAssertTrue(source.contains("case empty"))
+        XCTAssertTrue(source.contains("sourceKind == .mimo"))
+        XCTAssertTrue(source.contains("menuBarProgress"))
+        XCTAssertTrue(source.contains("remainingRatio"))
+        XCTAssertFalse(source.contains("rightRatio: remainingProgress"))
     }
 
     func testMiMoKeychainReadsDisallowAuthenticationUI() throws {
@@ -139,9 +189,22 @@ final class MenuBarShapeTests: XCTestCase {
     func testProviderDetailViewShowsActiveEntitlementCard() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/ProviderDetailView.swift")
         XCTAssertTrue(source.contains("displayedEntitlementSummary"))
-        XCTAssertTrue(source.contains("PanelDetailCard(title: \"套餐额度\")"))
+        XCTAssertTrue(source.contains("PanelDetailCard(title: \"套餐额度\", trailing:"))
+        XCTAssertTrue(source.contains("refreshCurrentEntitlement()"))
         XCTAssertTrue(source.contains("summary.status != .unconfigured"))
         XCTAssertFalse(source.contains("appState.groupQuotaSummary"))
+    }
+
+    func testQuotaRefreshControlsUseEntitlementRefreshState() throws {
+        let appStateSource = try sourceText(path: "App/Sources/AiUsage/Models/AppState.swift")
+        let rootSource = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+        let providerDetailSource = try sourceText(path: "App/Sources/AiUsage/Views/ProviderDetailView.swift")
+        let settingsSource = try sourceText(path: "App/Sources/AiUsage/Views/SettingsView.swift")
+
+        XCTAssertTrue(appStateSource.contains("isEntitlementRefreshInProgress"))
+        XCTAssertTrue(rootSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
+        XCTAssertTrue(providerDetailSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
+        XCTAssertTrue(settingsSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
     }
 
     private func sourceText(path: String) throws -> String {
@@ -152,5 +215,70 @@ final class MenuBarShapeTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         return try String(contentsOf: repoRoot.appendingPathComponent(path))
+    }
+
+    private func bitmap(from image: NSImage) -> NSBitmapImageRep? {
+        guard let tiffData = image.tiffRepresentation else { return nil }
+        return NSBitmapImageRep(data: tiffData)
+    }
+
+    private func visibleAlphas(_ image: NSImage) -> [CGFloat] {
+        guard let bitmap = bitmap(from: image) else { return [] }
+        var alphas: [CGFloat] = []
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0
+                if alpha > 0.05 {
+                    alphas.append(alpha)
+                }
+            }
+        }
+        return alphas
+    }
+
+    private func alphaColumnRuns(_ image: NSImage, y: Int) -> [[Int]] {
+        guard let bitmap = bitmap(from: image) else { return [] }
+        var runs: [[Int]] = []
+        var current: [Int] = []
+        for x in 0..<bitmap.pixelsWide {
+            let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0
+            if alpha > 0.05 {
+                current.append(x)
+            } else if current.isEmpty == false {
+                runs.append(current)
+                current = []
+            }
+        }
+        if current.isEmpty == false {
+            runs.append(current)
+        }
+        return runs
+    }
+
+    private func visibleAlphaBounds(_ image: NSImage) -> CGRect {
+        guard let bitmap = bitmap(from: image) else { return .null }
+        var minX = bitmap.pixelsWide
+        var minY = bitmap.pixelsHigh
+        var maxX = -1
+        var maxY = -1
+
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0
+                guard alpha > 0.05 else { continue }
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+
+        guard maxX >= minX, maxY >= minY else { return .null }
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1
+        )
     }
 }

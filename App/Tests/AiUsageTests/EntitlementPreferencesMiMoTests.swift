@@ -199,6 +199,21 @@ final class EntitlementPreferencesMiMoTests: XCTestCase {
         XCTAssertEqual(loaded[1].displayName, "Second")
     }
 
+    func testMimoAccountsMirrorDoesNotStorePasswordMD5() throws {
+        let account = MiMoAccount(
+            id: accountA,
+            credentials: MiMoCredentials(username: "user@example.com", passwordMD5: "SECRET_MD5"),
+            displayName: "User"
+        )
+
+        EntitlementPreferences.setMiMoAccounts([account], userDefaults: defaults)
+
+        let mirrorData = try XCTUnwrap(defaults.data(forKey: "entitlement.mimo.accounts.mirror"))
+        let mirrorText = String(data: mirrorData, encoding: .utf8) ?? ""
+        XCTAssertFalse(mirrorText.contains("SECRET_MD5"))
+        XCTAssertFalse(mirrorText.contains("passwordMD5"))
+    }
+
     func testSetMimoAccountsOverwritesPrevious() {
         let a1 = MiMoAccount(credentials: MiMoCredentials(username: "old", passwordMD5: "O"))
         let a2 = MiMoAccount(credentials: MiMoCredentials(username: "new", passwordMD5: "N"))

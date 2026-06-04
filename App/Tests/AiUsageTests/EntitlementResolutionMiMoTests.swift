@@ -1,4 +1,5 @@
 import XCTest
+import Domain
 @testable import AiUsage
 
 final class EntitlementResolutionMiMoTests: XCTestCase {
@@ -71,7 +72,11 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         XCTAssertEqual(mockHTTP.quotaRequestCount, 0)
         XCTAssertEqual(summary.status, .failed)
         XCTAssertEqual(summary.sourceKind, .mimo)
-        XCTAssertTrue(summary.secondaryWindow.primaryText.contains("重新登录"))
+        XCTAssertEqual(summary.message, "")
+        XCTAssertEqual(summary.visibleWindows.count, 1)
+        XCTAssertEqual(summary.primaryWindow.primaryText, "需要重新登录小米账号")
+        XCTAssertEqual(summary.primaryWindow.secondaryText, "")
+        XCTAssertEqual(summary.primaryWindow.footnoteText, "")
     }
 
     func testMiMoDoesNotAttemptHeadlessReloginOnQuotaUnauthorized() async {
@@ -90,7 +95,113 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         XCTAssertEqual(mockHTTP.quotaRequestCount, 1)
         XCTAssertEqual(summary.status, .failed)
         XCTAssertEqual(summary.sourceKind, .mimo)
-        XCTAssertTrue(summary.secondaryWindow.primaryText.contains("重新登录"))
+        XCTAssertEqual(summary.message, "")
+        XCTAssertEqual(summary.visibleWindows.count, 1)
+        XCTAssertEqual(summary.primaryWindow.primaryText, "需要重新登录小米账号")
+        XCTAssertEqual(summary.primaryWindow.secondaryText, "")
+        XCTAssertEqual(summary.primaryWindow.footnoteText, "")
+    }
+
+    func testMiMoFallsBackToLatestSnapshotWhenQuotaUnauthorized() async {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        let snapshotStore = QuotaSnapshotStoreStub(
+            snapshot: ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: testAccountID.uuidString,
+                    providerID: "mimo",
+                    accountLabel: "MiMo",
+                    backendLabel: "xiaomi",
+                    createdAt: capturedAt,
+                    updatedAt: capturedAt
+                ),
+                snapshot: QuotaSnapshot(
+                    id: "cached-snapshot",
+                    accountID: testAccountID.uuidString,
+                    refreshRunID: nil,
+                    capturedAt: capturedAt,
+                    freshnessDate: capturedAt,
+                    isStale: false
+                ),
+                windows: [
+                    AllowanceWindow(
+                        id: "cached-window",
+                        snapshotID: "cached-snapshot",
+                        kind: .monthly,
+                        used: 14,
+                        limit: 100,
+                        remaining: 86,
+                        resetsAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            )
+        )
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.registerQuotaResponse(statusCode: 401)
+
+        let service = makeService(httpClient: mockHTTP, quotaSnapshotStore: snapshotStore)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
+
+        XCTAssertEqual(summary.status, .stale)
+        XCTAssertEqual(summary.primaryWindow.primaryText, "14% used")
+        XCTAssertEqual(summary.menuBarProgress ?? 0, 0.14, accuracy: 0.001)
+    }
+
+    func testMiMoStartupUsesCachedSnapshotBeforeReadingLiveQuota() async {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        let snapshotStore = QuotaSnapshotStoreStub(
+            snapshot: ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: testAccountID.uuidString,
+                    providerID: "mimo",
+                    accountLabel: "MiMo",
+                    backendLabel: "xiaomi",
+                    createdAt: capturedAt,
+                    updatedAt: capturedAt
+                ),
+                snapshot: QuotaSnapshot(
+                    id: "cached-snapshot",
+                    accountID: testAccountID.uuidString,
+                    refreshRunID: nil,
+                    capturedAt: capturedAt,
+                    freshnessDate: capturedAt,
+                    isStale: false
+                ),
+                windows: [
+                    AllowanceWindow(
+                        id: "cached-window",
+                        snapshotID: "cached-snapshot",
+                        kind: .monthly,
+                        used: 14,
+                        limit: 100,
+                        remaining: 86,
+                        resetsAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            )
+        )
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        let service = makeService(httpClient: mockHTTP, quotaSnapshotStore: snapshotStore)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(
+            for: descriptor,
+            configuration: .mimoSelected,
+            trigger: .startup,
+            now: Date()
+        )
+
+        XCTAssertEqual(mockHTTP.quotaRequestCount, 0)
+        XCTAssertEqual(summary.status, .stale)
+        XCTAssertEqual(summary.primaryWindow.primaryText, "14% used")
+        XCTAssertEqual(summary.menuBarProgress ?? 0, 0.14, accuracy: 0.001)
     }
 
     func testMiMoReturnsFailedWhenNoStoredTokenExists() async {
@@ -106,6 +217,7 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         XCTAssertEqual(mockHTTP.ssoLoginCount, 0)
         XCTAssertEqual(summary.status, .failed)
         XCTAssertEqual(summary.sourceKind, .mimo)
+        XCTAssertEqual(summary.visibleWindows.count, 1)
     }
 
     // MARK: - Multi-Account Tests
@@ -145,9 +257,8 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         // Aggregated plan: used=250, limit=500, progress = 250/500 = 0.5
         XCTAssertEqual(summary.sourceKind, .mimo)
         XCTAssertEqual(summary.primaryWindow.title, "套餐总额度")
-        XCTAssertEqual(summary.primaryWindow.primaryText, "已用 50%")
-        XCTAssertTrue(summary.primaryWindow.secondaryText.contains("250"))
-        XCTAssertTrue(summary.primaryWindow.secondaryText.contains("500"))
+        XCTAssertEqual(summary.primaryWindow.detailText, "250 / 500 tokens")
+        XCTAssertEqual(summary.primaryWindow.primaryText, "50% used")
         XCTAssertEqual(summary.primaryWindow.progress ?? 0, 0.5, accuracy: 0.01)
         XCTAssertFalse(summary.secondaryWindow.isVisible)
     }
@@ -176,12 +287,55 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
 
         XCTAssertEqual(summary.status, .ready)
         XCTAssertEqual(summary.primaryWindow.title, "套餐总额度")
-        XCTAssertEqual(summary.primaryWindow.progress ?? 0, 0, accuracy: 0.01)
-        XCTAssertEqual(summary.secondaryWindow.title, "补偿额度")
-        XCTAssertEqual(summary.secondaryWindow.primaryText, "已用 42%")
-        XCTAssertTrue(summary.secondaryWindow.secondaryText.contains("13.84亿"))
-        XCTAssertTrue(summary.secondaryWindow.secondaryText.contains("32.86亿"))
-        XCTAssertTrue(summary.secondaryWindow.isVisible)
+        XCTAssertEqual(summary.primaryWindow.detailText, "1.38B / 25.29B tokens")
+        XCTAssertEqual(summary.primaryWindow.primaryText, "5% used")
+        XCTAssertEqual(summary.primaryWindow.progress ?? 0, 0.055, accuracy: 0.001)
+        XCTAssertEqual(summary.menuBarProgress ?? 0, 0.055, accuracy: 0.001)
+        XCTAssertFalse(summary.secondaryWindow.isVisible)
+    }
+
+    func testMiMoDoesNotRequestOrShowPaidBalanceAcrossAccountsWhenPresent() async {
+        setupTwoAccountsWithTokens()
+
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.balanceRouteByToken["tok1"] = (100, 25, 125, "CNY")
+        mockHTTP.balanceRouteByToken["tok2"] = (40, 35, 75, "CNY")
+        mockHTTP.registerQuotaResponseWithUsage(used: 100, limit: 200, monthPercent: 0.5)
+        mockHTTP.registerQuotaResponseWithUsage(used: 150, limit: 300, monthPercent: 0.5)
+
+        let service = makeService(httpClient: mockHTTP)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
+
+        XCTAssertEqual(summary.status, .ready)
+        XCTAssertEqual(mockHTTP.balanceRequestCount, 0)
+        XCTAssertNil(summary.visibleWindows.first { $0.title == "账户余额" })
+    }
+
+    func testDerivedOverviewDoesNotIncludeMiMoAccountBalanceWindow() async {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.balanceRouteByToken["cached_tok"] = (5, 5, 0, "CNY")
+        mockHTTP.registerQuotaResponseWithUsage(used: 100, limit: 200, monthPercent: 0.5)
+
+        let service = makeService(httpClient: mockHTTP)
+        let descriptors = [
+            EntitlementTargetDescriptor(targetID: .overview, name: "总览", supportsOfficial: false),
+            mimoDescriptor()
+        ]
+
+        let summaries = await service.resolveSummaries(
+            descriptors: descriptors,
+            visibleProviderIDs: ["mimo"],
+            now: Date()
+        )
+
+        let overview = summaries[EntitlementTargetID.overview.storageKey]
+        XCTAssertEqual(mockHTTP.balanceRequestCount, 0)
+        XCTAssertNil(overview?.visibleWindows.first { $0.title == "账户余额" })
     }
 
     func testMiMoHandlesPartialLoginFailure() async {
@@ -200,19 +354,155 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
 
         let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
 
-        // Account 1 succeeds, account 2 fails → aggregated from successful accounts → ready
-        XCTAssertEqual(summary.status, .ready)
+        // Account 1 succeeds, account 2 fails → keep usable data but mark it partial.
+        XCTAssertEqual(summary.status, .stale)
+        XCTAssertTrue(summary.message.contains("部分账号"))
         XCTAssertEqual(summary.primaryWindow.progress ?? 0, 0.5, accuracy: 0.01)
+    }
+
+    func testMiMoFallsBackToLatestSnapshotWhenQuotaRefreshFailsWithNetworkError() async {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        let snapshotStore = QuotaSnapshotStoreStub(
+            snapshot: ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: testAccountID.uuidString,
+                    providerID: "mimo",
+                    accountLabel: "MiMo",
+                    backendLabel: "xiaomi",
+                    createdAt: capturedAt,
+                    updatedAt: capturedAt
+                ),
+                snapshot: QuotaSnapshot(
+                    id: "cached-snapshot",
+                    accountID: testAccountID.uuidString,
+                    refreshRunID: nil,
+                    capturedAt: capturedAt,
+                    freshnessDate: capturedAt,
+                    isStale: false
+                ),
+                windows: [
+                    AllowanceWindow(
+                        id: "cached-window",
+                        snapshotID: "cached-snapshot",
+                        kind: .monthly,
+                        used: 40,
+                        limit: 100,
+                        remaining: 60,
+                        resetsAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            )
+        )
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        let service = makeService(httpClient: mockHTTP, quotaSnapshotStore: snapshotStore)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
+
+        XCTAssertEqual(summary.status, .stale)
+        XCTAssertEqual(summary.primaryWindow.title, "套餐总额度")
+        XCTAssertEqual(summary.primaryWindow.detailText, "40 / 100 tokens")
+        XCTAssertEqual(summary.primaryWindow.primaryText, "40% used")
+        XCTAssertEqual(summary.primaryWindow.progress ?? 0, 0.4, accuracy: 0.001)
+    }
+
+    func testMiMoFallsBackToLatestSnapshotWhenStoredTokenIsUnavailable() async {
+        setupValidCredentials()
+
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        let snapshotStore = QuotaSnapshotStoreStub(
+            snapshot: ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: testAccountID.uuidString,
+                    providerID: "mimo",
+                    accountLabel: "MiMo",
+                    backendLabel: "xiaomi",
+                    createdAt: capturedAt,
+                    updatedAt: capturedAt
+                ),
+                snapshot: QuotaSnapshot(
+                    id: "cached-snapshot",
+                    accountID: testAccountID.uuidString,
+                    refreshRunID: nil,
+                    capturedAt: capturedAt,
+                    freshnessDate: capturedAt,
+                    isStale: false
+                ),
+                windows: [
+                    AllowanceWindow(
+                        id: "cached-window",
+                        snapshotID: "cached-snapshot",
+                        kind: .monthly,
+                        used: 14,
+                        limit: 100,
+                        remaining: 86,
+                        resetsAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            )
+        )
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        let service = makeService(httpClient: mockHTTP, quotaSnapshotStore: snapshotStore)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
+
+        XCTAssertEqual(mockHTTP.quotaRequestCount, 0)
+        XCTAssertEqual(summary.status, .stale)
+        XCTAssertEqual(summary.primaryWindow.primaryText, "14% used")
+        XCTAssertEqual(summary.menuBarProgress ?? 0, 0.14, accuracy: 0.001)
+    }
+
+    func testMiMoPersistsAggregateSnapshotWhenAllAccountsRefresh() async {
+        setupTwoAccountsWithTokens()
+
+        let snapshotStore = QuotaSnapshotStoreStub(snapshot: nil)
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.quotaRouteByToken["tok1"] = (0.2, 0.4, 200)
+        mockHTTP.quotaRouteByToken["tok2"] = (0.2, 0.4, 200)
+
+        let service = makeService(httpClient: mockHTTP, quotaSnapshotStore: snapshotStore)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
+
+        XCTAssertEqual(summary.status, .ready)
+        XCTAssertEqual(snapshotStore.persistedSnapshots.count, 1)
+        XCTAssertEqual(snapshotStore.persistedSnapshots.first?.account.id, "mimo-aggregate")
+    }
+
+    func testMiMoDoesNotPersistPartialAggregateWhenSomeAccountsFail() async {
+        setupTwoAccountsWithTokens()
+
+        let snapshotStore = QuotaSnapshotStoreStub(snapshot: nil)
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.quotaRouteByToken["tok1"] = (0.0, 0.0, 401)
+        mockHTTP.quotaRouteByToken["tok2"] = (0.2, 0.4, 200)
+
+        let service = makeService(httpClient: mockHTTP, quotaSnapshotStore: snapshotStore)
+        let descriptor = mimoDescriptor()
+
+        let summary = await service.resolveSummary(for: descriptor, configuration: .mimoSelected, now: Date())
+
+        XCTAssertEqual(summary.status, .stale)
+        XCTAssertTrue(snapshotStore.persistedSnapshots.isEmpty)
     }
 
     // MARK: - Helpers
 
-    private func makeService(httpClient: MiMoHTTPClientProtocol = MockMiMoFlowHTTPClient()) -> EntitlementResolutionService {
+    private func makeService(
+        httpClient: MiMoHTTPClientProtocol = MockMiMoFlowHTTPClient(),
+        quotaSnapshotStore: QuotaSnapshotStoring? = nil
+    ) -> EntitlementResolutionService {
         let mimoQuota = MiMoQuotaService(client: httpClient)
         return EntitlementResolutionService(
             thirdPartyService: LaifuyouQuotaService(),
             officialProbe: OfficialEntitlementProbe(),
             mimoQuota: mimoQuota,
+            quotaSnapshotStore: quotaSnapshotStore,
             userDefaults: defaults
         )
     }
@@ -252,13 +542,32 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
     }
 }
 
+private final class QuotaSnapshotStoreStub: QuotaSnapshotStoring, @unchecked Sendable {
+    let snapshot: ProviderQuotaSnapshot?
+    private(set) var persistedSnapshots: [ProviderQuotaSnapshot] = []
+
+    init(snapshot: ProviderQuotaSnapshot?) {
+        self.snapshot = snapshot
+    }
+
+    func persistQuotaSnapshot(_ snapshot: ProviderQuotaSnapshot) async throws {
+        persistedSnapshots.append(snapshot)
+    }
+
+    func latestQuotaSnapshot(providerID: String, accountID: String) async throws -> ProviderQuotaSnapshot? {
+        snapshot
+    }
+}
+
 // MARK: - Mock HTTP Client for full MiMo flow
 
 private final class MockMiMoFlowHTTPClient: MiMoHTTPClientProtocol, @unchecked Sendable {
     private var responses: [(URLRequest) -> (Data, HTTPURLResponse)] = []
     private(set) var ssoLoginCount = 0
     private(set) var quotaRequestCount = 0
+    private(set) var balanceRequestCount = 0
     var quotaRouteByToken: [String: (Double, Double, Int)] = [:]  // serviceToken → (monthPercent, planPercent, statusCode)
+    var balanceRouteByToken: [String: (balance: Double, gift: Double, cash: Double, currency: String)] = [:]
 
     func registerSSOLogin() {
         // Step1: serviceLogin
@@ -335,6 +644,41 @@ private final class MockMiMoFlowHTTPClient: MiMoHTTPClientProtocol, @unchecked S
         }
 
         if request.url!.path.contains("tokenPlan/detail") {
+            let json = #"{"code":0,"data":{}}"#
+            return (
+                json.data(using: .utf8)!,
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+            )
+        }
+
+        if request.url!.path.contains("balance") {
+            balanceRequestCount += 1
+        }
+
+        if request.url!.path.contains("balance"),
+           let cookie = request.value(forHTTPHeaderField: "Cookie"),
+           let tokenValue = extractServiceToken(from: cookie),
+           let route = balanceRouteByToken[tokenValue] {
+            let json = """
+            {"balance":"\(route.balance)","giftBalance":"\(route.gift)","cashBalance":"\(route.cash)","frozenBalance":"0","currency":"\(route.currency)"}
+            """
+            return (
+                json.data(using: .utf8)!,
+                HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+            )
+        }
+
+        if request.url!.path.contains("balance") {
             let json = #"{"code":0,"data":{}}"#
             return (
                 json.data(using: .utf8)!,
