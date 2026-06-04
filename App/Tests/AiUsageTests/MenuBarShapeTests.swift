@@ -80,14 +80,24 @@ final class MenuBarShapeTests: XCTestCase {
 
     func testSettingsSourceIncludesProviderToggleSection() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/SettingsView.swift")
-        XCTAssertTrue(source.contains("账号与来源"))
+        XCTAssertTrue(source.contains("Agent 显示"))
         XCTAssertTrue(source.contains("当前状态"))
-        XCTAssertTrue(source.contains("套餐额度"))
-        XCTAssertTrue(source.contains("Text(\"第三方 API\")"))
-        XCTAssertTrue(source.contains("Quota URL"))
-        XCTAssertTrue(source.contains("API Key"))
+        XCTAssertTrue(source.contains("本机 usage 统计"))
+        XCTAssertFalse(source.contains("账号与来源"))
+        XCTAssertFalse(source.contains("套餐额度"))
+        XCTAssertFalse(source.contains("Text(\"第三方 API\")"))
+        XCTAssertFalse(source.contains("Quota URL"))
+        XCTAssertFalse(source.contains("API Key"))
         XCTAssertFalse(source.contains("Quota 服务"))
         XCTAssertFalse(source.contains("Group ID"))
+    }
+
+    func testSettingsActionActivatesAndOrdersWindowFront() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+        XCTAssertTrue(source.contains("openSettingsFrontmost()"))
+        XCTAssertTrue(source.contains("NSApp.activate(ignoringOtherApps: true)"))
+        XCTAssertTrue(source.contains("NSApp.windows"))
+        XCTAssertTrue(source.contains("orderFrontRegardless()"))
     }
 
     func testMiMoLoginSourceUsesOfficialWebLogin() throws {
@@ -200,11 +210,19 @@ final class MenuBarShapeTests: XCTestCase {
         let rootSource = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
         let providerDetailSource = try sourceText(path: "App/Sources/AiUsage/Views/ProviderDetailView.swift")
         let settingsSource = try sourceText(path: "App/Sources/AiUsage/Views/SettingsView.swift")
+        let quotaManagementSource = try sourceText(path: "App/Sources/AiUsage/Views/QuotaManagementView.swift")
 
         XCTAssertTrue(appStateSource.contains("isEntitlementRefreshInProgress"))
         XCTAssertTrue(rootSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
         XCTAssertTrue(providerDetailSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
-        XCTAssertTrue(settingsSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
+        XCTAssertFalse(settingsSource.contains("refreshCurrentEntitlement()"))
+        XCTAssertTrue(quotaManagementSource.contains("refresh()"))
+    }
+
+    func testQuotaManagementKeepsAddAccountAvailableWhenEmpty() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaManagementView.swift")
+        XCTAssertTrue(source.contains("暂无额度账号"))
+        XCTAssertTrue(source.contains("addMiMoAccount()"))
     }
 
     private func sourceText(path: String) throws -> String {

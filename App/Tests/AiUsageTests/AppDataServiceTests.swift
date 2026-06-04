@@ -119,6 +119,9 @@ private struct SnapshotReaderStub: AppSnapshotReading {
                 )
             ],
             providerPreferences: [ProviderPreferenceSnapshot(id: "claude-code", name: "Claude", subtitle: "控制该来源是否显示在 usage 统计中", isEnabled: true)],
+            entitlementTargets: [
+                EntitlementTargetDescriptor(targetID: .overview, name: "总览", supportsOfficial: false)
+            ],
             selectedTabID: EntitlementTargetID.overview.storageKey,
             overview: OverviewPanelSnapshot(
                 todayTokens: 1200,

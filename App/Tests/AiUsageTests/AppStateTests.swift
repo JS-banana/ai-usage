@@ -329,6 +329,7 @@ private struct EmptySnapshotReaderStub: AppSnapshotReading {
         AppSnapshot(
             providerTabs: [],
             providerPreferences: [],
+            entitlementTargets: [],
             selectedTabID: EntitlementTargetID.overview.storageKey,
             overview: OverviewPanelSnapshot(
                 todayTokens: 0,

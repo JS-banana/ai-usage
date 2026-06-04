@@ -263,6 +263,32 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         XCTAssertFalse(summary.secondaryWindow.isVisible)
     }
 
+    func testMiMoResolutionIncludesPerAccountSummariesForMenuBarPinning() async {
+        setupTwoAccountsWithTokens()
+
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.quotaRouteByToken["tok1"] = (0.1, 0.2, 200)
+        mockHTTP.quotaRouteByToken["tok2"] = (0.4, 0.6, 200)
+
+        let service = makeService(httpClient: mockHTTP)
+
+        let summaries = await service.resolveSummaries(
+            descriptors: [mimoDescriptor()],
+            visibleProviderIDs: ["mimo"],
+            now: Date()
+        )
+
+        let firstKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: testAccountID)
+        let secondKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: secondAccountID)
+
+        XCTAssertEqual(summaries["mimo"]?.status, .ready)
+        XCTAssertEqual(summaries[firstKey]?.title, "user1")
+        XCTAssertEqual(summaries[firstKey]?.sourceKind, .mimo)
+        XCTAssertEqual(summaries[firstKey]?.menuBarProgress ?? 0, 0.2, accuracy: 0.001)
+        XCTAssertEqual(summaries[secondKey]?.title, "user2")
+        XCTAssertEqual(summaries[secondKey]?.menuBarProgress ?? 0, 0.6, accuracy: 0.001)
+    }
+
     func testMiMoAggregatesCompensationAcrossAccountsWhenPresent() async {
         setupTwoAccountsWithTokens()
 
@@ -336,6 +362,30 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         let overview = summaries[EntitlementTargetID.overview.storageKey]
         XCTAssertEqual(mockHTTP.balanceRequestCount, 0)
         XCTAssertNil(overview?.visibleWindows.first { $0.title == "账户余额" })
+    }
+
+    func testDerivedOverviewCanUseMiMoEvenWhenMiMoIsNotAnAgentTab() async {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.registerQuotaResponseWithUsage(used: 100, limit: 200, monthPercent: 0.5)
+
+        let service = makeService(httpClient: mockHTTP)
+        let summaries = await service.resolveSummaries(
+            descriptors: [
+                EntitlementTargetDescriptor(targetID: .overview, name: "总览", supportsOfficial: false),
+                mimoDescriptor()
+            ],
+            visibleProviderIDs: [],
+            now: Date()
+        )
+
+        let overview = summaries[EntitlementTargetID.overview.storageKey]
+
+        XCTAssertEqual(overview?.sourceKind, .mimo)
+        XCTAssertEqual(overview?.derivedFromTitle, "MiMo")
+        XCTAssertEqual(overview?.primaryWindow.primaryText, "50% used")
     }
 
     func testMiMoHandlesPartialLoginFailure() async {
