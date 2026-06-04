@@ -7,7 +7,7 @@ macOS 菜单栏 AI usage 查看器。本地优先，不托管账号，不保存�
 AiUsage 有两套一等功能逻辑，代码和刷新策略必须保持分层：
 
 1. **本机 Agent Usage 统计**：Codex、Claude Code、OpenCode、Gemini 等本机日志/历史文件解析，经过 Ingestion → Persistence → Query 聚合出 token、请求数、趋势和来源健康度。
-2. **Entitlement / Subscription 查询**：MiMo、后续 GPT Plus、GLM 等账号或订阅套餐的远程额度查询。它依赖官方网页登录态、第三方 API 或 CLI 探测，回答剩余额度、重置/过期时间、是否需要重新登录。
+2. **Entitlement / Subscription 查询**：MiMo、后续 GPT Plus、GLM 等账号或订阅套餐的远程额度查询。它依赖官方网页登录态、第三方 API 或 CLI 探测，回答剩余额度、重置/过期时间、是否需要重新登录。它在 UI 上归属独立“额度”tab，不应伪装成本机 agent tab。
 
 不要把远程额度失败当成本地 usage 失败；也不要让本地日志扫描阻塞手动额度刷新。
 
@@ -44,7 +44,7 @@ App (ExecutableTarget) — 依赖以上所有模块
 2. **官方 CLI 探测（OfficialEntitlementProbe）**：shell 调用 `codex -s read-only` 或 `claude -p '/usage'`，解析 ANSI 输出中的百分比。当前仅 Claude Code 和 Codex。
 3. **MiMo 官方网页登录（MiMoWebLoginView + MiMoQuotaService）**：App 内打开小米/MiMo 官方页面，用户在官方页面完成账号密码、验证码或风控校验；App 自动提取登录后的 `serviceToken` Cookie，存入 Keychain，再调用 `/api/v1/tokenPlan/usage` 返回套餐总 token 用量，并用 `/api/v1/tokenPlan/detail` 补充套餐到期时间。MiMo 没有 5h/week 限额，UI 将 `plan_total_token` 与 `compensation_total_token` 合并为一个 token-plan 总额度卡片，显示 used 百分比、到期时间和简短 token 明细；账户余额接口已调研但当前暂停，不请求 `/api/v1/balance`，也不展示余额卡。菜单栏 icon 始终按剩余额度展示：MiMo 使用合并 token-plan 剩余比例的单个 token tank，coding-plan provider 使用 5h/session 与 7d/week 双柱。后台刷新只复用已存 token，401 或缺 token 时提示重新登录，不用账号密码静默重试；网络失败时优先保留上次成功额度 snapshot 并标记 stale。
 
-总览额度派生逻辑：显式配置优先，否则从可见 provider 中选择"风险最高"的（failed > stale > ready，使用率高的优先）。
+菜单栏额度来源：通过“额度”tab 选择。默认 `Auto` 从可用额度中选择剩余比例最低的目标；用户也可以固定到某个厂商聚合或具体账号。固定目标不可用时显示该目标的 stale/empty 状态，不偷偷切换到其他账号。
 
 ## 刷新策略
 
@@ -52,6 +52,7 @@ App (ExecutableTarget) — 依赖以上所有模块
 - Entitlement 默认 TTL：30 分钟，触发远程额度查询或 CLI 探测。
 - 打开菜单和 app active 不做无条件刷新；后台 scheduler 只执行 `refreshIfStale`。
 - 手动刷新全部数据可以调用组合入口；额度卡片上的刷新图标只刷新 entitlement，不跑本地 usage import。
+- 设置窗口只控制本机 agent 显隐；账号和额度管理放在主弹窗的“额度”tab。
 - 初始化尚未加载 quota 时不显示“套餐额度暂不可用”大块占位；只有已完成刷新后缺登录态、401 或失败时才给紧凑反馈。
 
 ## 数据库
