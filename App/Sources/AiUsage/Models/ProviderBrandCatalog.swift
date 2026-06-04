@@ -23,6 +23,13 @@ enum ProviderBrandCatalog {
                 logoResource: nil,
                 fallbackIcon: .symbol("square.grid.2x2.fill")
             )
+        case "quota":
+            ProviderTabBranding(
+                accentToken: .generic,
+                accentColor: ProviderBrandColor(red: 0.33, green: 0.56, blue: 0.83),
+                logoResource: nil,
+                fallbackIcon: .symbol("gauge.with.dots.needle.bottom.50percent")
+            )
         case "claude-code":
             brandedProvider(
                 token: .claude,
