@@ -91,6 +91,14 @@ final class AppState {
         entitlementSummariesByTarget[selectedTabID ?? EntitlementTargetID.overview.storageKey]
     }
 
+    var quotaGroups: [QuotaVendorGroupSnapshot] {
+        QuotaAccountReadModel.makeGroups(entitlementsByTarget: entitlementSummariesByTarget)
+    }
+
+    var menuBarTargetPreference: QuotaMenuBarTargetPreference {
+        EntitlementPreferences.menuBarTargetPreference()
+    }
+
     func startIfNeeded() async {
         guard hasBootstrapped == false else { return }
         guard dataService != nil else {
@@ -232,6 +240,7 @@ final class AppState {
                 baseSnapshot = AppSnapshot(
                     providerTabs: providerTabs,
                     providerPreferences: providerPreferences,
+                    entitlementTargets: [],
                     selectedTabID: selectedTabID ?? EntitlementTargetID.overview.storageKey,
                     overview: overviewPanel,
                     panelsByID: providerPanelsByID,
@@ -282,11 +291,7 @@ final class AppState {
 
     func selectTab(_ tabID: String) {
         selectedTabID = tabID
-        menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            activeTargetID: tabID,
-            overview: overviewPanel,
-            entitlementsByTarget: entitlementSummariesByTarget
-        )
+        refreshMenuBarSummary()
     }
 
     func setProviderEnabled(_ providerID: String, enabled: Bool) {
@@ -294,11 +299,7 @@ final class AppState {
         if enabled == false, selectedTabID == providerID {
             selectedTabID = EntitlementTargetID.overview.storageKey
         }
-        menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            activeTargetID: selectedTabID,
-            overview: overviewPanel,
-            entitlementsByTarget: entitlementSummariesByTarget
-        )
+        refreshMenuBarSummary()
         Task {
             await refresh(trigger: .manual)
         }
@@ -310,6 +311,11 @@ final class AppState {
 
     func markMiMoLoginCompleted() {
         completedMiMoLoginSequence += 1
+    }
+
+    func setMenuBarTargetPreference(_ preference: QuotaMenuBarTargetPreference) {
+        EntitlementPreferences.setMenuBarTargetPreference(preference)
+        refreshMenuBarSummary()
     }
 
     func startAutoRefresh(intervalSeconds: TimeInterval? = nil) {
@@ -340,15 +346,19 @@ final class AppState {
         overviewPanel = snapshot.overview
         providerPanelsByID = snapshot.panelsByID
         selectedTabID = snapshot.selectedTabID
-        menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            activeTargetID: selectedTabID,
-            overview: overviewPanel,
-            entitlementsByTarget: entitlementSummariesByTarget
-        )
+        refreshMenuBarSummary()
     }
 
     private func applyEntitlementSnapshot(_ snapshot: AppSnapshot) {
         entitlementSummariesByTarget = snapshot.entitlementSummariesByTarget
         menuBarSummary = snapshot.menuBarSummary
+    }
+
+    private func refreshMenuBarSummary() {
+        menuBarSummary = menuBarSummaryReadModelService.makeSummary(
+            targetPreference: EntitlementPreferences.menuBarTargetPreference(),
+            overview: overviewPanel,
+            entitlementsByTarget: entitlementSummariesByTarget
+        )
     }
 }

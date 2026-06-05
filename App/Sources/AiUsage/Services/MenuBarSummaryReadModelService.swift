@@ -33,10 +33,29 @@ struct MenuBarSummaryReadModelService {
         entitlementsByTarget: [String: EntitlementSummarySnapshot]
     ) -> MenuBarSummarySnapshot {
         let targetID = activeTargetID ?? EntitlementTargetID.overview.storageKey
+        return makeSummary(
+            targetPreference: .target(targetID),
+            overview: overview,
+            entitlementsByTarget: entitlementsByTarget
+        )
+    }
+
+    func makeSummary(
+        targetPreference: QuotaMenuBarTargetPreference,
+        overview: OverviewPanelSnapshot?,
+        entitlementsByTarget: [String: EntitlementSummarySnapshot]
+    ) -> MenuBarSummarySnapshot {
+        let targetID: String
+        switch targetPreference {
+        case .auto:
+            targetID = autoTargetID(entitlementsByTarget: entitlementsByTarget) ?? EntitlementTargetID.overview.storageKey
+        case .target(let pinnedTargetID):
+            targetID = pinnedTargetID
+        }
         guard let summary = entitlementsByTarget[targetID] else {
             return MenuBarSummarySnapshot(
                 title: "AiUsage",
-                subtitle: "暂无数据",
+                subtitle: targetPreference == .auto ? "暂无数据" : "\(targetID) · 暂无额度数据",
                 status: .empty,
                 glyph: .empty
             )
@@ -49,6 +68,24 @@ struct MenuBarSummaryReadModelService {
             subtitle: subtitle,
             status: status,
             glyph: glyph(for: summary)
+        )
+    }
+
+    private func autoTargetID(entitlementsByTarget: [String: EntitlementSummarySnapshot]) -> String? {
+        let providerCandidates = entitlementsByTarget
+            .filter { $0.key != EntitlementTargetID.overview.storageKey }
+            .filter { _, summary in summary.status == .ready || summary.status == .stale }
+        if let chosen = providerCandidates.max(by: { lhs, rhs in progressScore(lhs.value) < progressScore(rhs.value) }) {
+            return chosen.key
+        }
+        return entitlementsByTarget[EntitlementTargetID.overview.storageKey] == nil ? nil : EntitlementTargetID.overview.storageKey
+    }
+
+    private func progressScore(_ summary: EntitlementSummarySnapshot) -> Double {
+        max(
+            summary.menuBarProgress ?? 0,
+            summary.primaryWindow.progress ?? 0,
+            summary.secondaryWindow.progress ?? 0
         )
     }
 

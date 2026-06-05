@@ -58,7 +58,7 @@ actor AppDataService {
         var snapshot = try await readModelService.makeSnapshot(preferredTabID: preferredTabID)
         snapshot.statusMessage = "Usage 已刷新"
         snapshot.menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            activeTargetID: snapshot.selectedTabID,
+            targetPreference: EntitlementPreferences.menuBarTargetPreference(),
             overview: snapshot.overview,
             entitlementsByTarget: snapshot.entitlementSummariesByTarget
         )
@@ -67,7 +67,7 @@ actor AppDataService {
 
     func refreshEntitlements(from existingSnapshot: AppSnapshot, trigger: ImportTrigger = .manual, preferredTabID: String?) async throws -> AppSnapshot {
         var snapshot = existingSnapshot
-        let descriptors = EntitlementPreferences.descriptorTargets(providerPreferences: snapshot.providerPreferences)
+        let descriptors = snapshot.entitlementTargets
         let visibleProviderIDs = Set(snapshot.providerTabs.map(\.id).filter { $0 != EntitlementTargetID.overview.storageKey })
         snapshot.entitlementSummariesByTarget = await entitlementService.resolveSummaries(
             descriptors: descriptors,
@@ -76,7 +76,7 @@ actor AppDataService {
             now: Date()
         )
         snapshot.menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            activeTargetID: snapshot.selectedTabID,
+            targetPreference: EntitlementPreferences.menuBarTargetPreference(),
             overview: snapshot.overview,
             entitlementsByTarget: snapshot.entitlementSummariesByTarget
         )

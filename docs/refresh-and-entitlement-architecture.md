@@ -20,6 +20,13 @@ AiUsage separates local usage statistics from remote entitlement or subscription
 
 These domains can be shown together, but failure in one domain must not erase the other.
 
+## UI Ownership
+
+- Settings owns local agent visibility only. It should not configure quota sources or remote accounts.
+- The main menu owns runtime tabs: `总览`, `额度`, then enabled local-usage agent tabs.
+- Remote-only providers such as MiMo appear under the `额度` tab as vendor/account groups, not as agent tabs.
+- The menu bar quota glyph is driven by an explicit quota target preference. `Auto` chooses the available quota with the lowest remaining ratio; a pinned vendor/account stays pinned even if it later becomes stale or unavailable.
+
 ## Refresh Flow
 
 `AppState` owns user-visible refresh state:
@@ -61,4 +68,3 @@ Schema v3 contains the entitlement snapshot surface:
 - `account_diagnostics`
 
 New entitlement providers should write account snapshots instead of inventing provider-specific cache files. Add a database migration only when the existing v3 tables cannot express the data.
-
