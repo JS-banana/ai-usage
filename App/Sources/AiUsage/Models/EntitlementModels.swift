@@ -26,6 +26,7 @@ enum EntitlementSourceSelection: String, CaseIterable, Identifiable, Sendable {
     case none
     case official
     case thirdParty
+    case mimo
 
     var id: String { rawValue }
 }
@@ -33,6 +34,7 @@ enum EntitlementSourceSelection: String, CaseIterable, Identifiable, Sendable {
 enum EntitlementSourceKind: String, Hashable, Sendable {
     case official
     case thirdParty
+    case mimo
 }
 
 enum EntitlementSummaryStatus: String, Hashable, Sendable {
@@ -63,10 +65,49 @@ struct EntitlementTargetConfiguration: Hashable, Sendable {
 struct EntitlementWindowSnapshot: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
+    let detailText: String
     let primaryText: String
     let secondaryText: String
     let footnoteText: String
     let progress: Double?
+
+    init(
+        id: String,
+        title: String,
+        detailText: String = "",
+        primaryText: String,
+        secondaryText: String,
+        footnoteText: String,
+        progress: Double?
+    ) {
+        self.id = id
+        self.title = title
+        self.detailText = detailText
+        self.primaryText = primaryText
+        self.secondaryText = secondaryText
+        self.footnoteText = footnoteText
+        self.progress = progress
+    }
+
+    var isVisible: Bool {
+        title.isEmpty == false
+            || detailText.isEmpty == false
+            || primaryText.isEmpty == false
+            || secondaryText.isEmpty == false
+            || footnoteText.isEmpty == false
+            || progress != nil
+    }
+
+    static func hidden(id: String) -> EntitlementWindowSnapshot {
+        EntitlementWindowSnapshot(
+            id: id,
+            title: "",
+            primaryText: "",
+            secondaryText: "",
+            footnoteText: "",
+            progress: nil
+        )
+    }
 }
 
 struct EntitlementSummarySnapshot: Hashable, Sendable {
@@ -80,8 +121,42 @@ struct EntitlementSummarySnapshot: Hashable, Sendable {
     let derivedFromTitle: String?
     let primaryWindow: EntitlementWindowSnapshot
     let secondaryWindow: EntitlementWindowSnapshot
+    let extraWindows: [EntitlementWindowSnapshot]
+    let menuBarProgress: Double?
+
+    init(
+        targetID: EntitlementTargetID,
+        title: String,
+        message: String,
+        updatedAt: Date?,
+        status: EntitlementSummaryStatus,
+        sourceKind: EntitlementSourceKind?,
+        provenance: EntitlementProvenance,
+        derivedFromTitle: String?,
+        primaryWindow: EntitlementWindowSnapshot,
+        secondaryWindow: EntitlementWindowSnapshot,
+        extraWindows: [EntitlementWindowSnapshot] = [],
+        menuBarProgress: Double? = nil
+    ) {
+        self.targetID = targetID
+        self.title = title
+        self.message = message
+        self.updatedAt = updatedAt
+        self.status = status
+        self.sourceKind = sourceKind
+        self.provenance = provenance
+        self.derivedFromTitle = derivedFromTitle
+        self.primaryWindow = primaryWindow
+        self.secondaryWindow = secondaryWindow
+        self.extraWindows = extraWindows
+        self.menuBarProgress = menuBarProgress
+    }
 
     var isDerived: Bool { provenance == .derived }
+
+    var visibleWindows: [EntitlementWindowSnapshot] {
+        ([primaryWindow, secondaryWindow] + extraWindows).filter(\.isVisible)
+    }
 
     static func placeholder(
         targetID: EntitlementTargetID,

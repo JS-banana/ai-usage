@@ -59,6 +59,16 @@ open Package.swift
 swift test
 ```
 
+额度和刷新策略相关改动优先跑：
+
+```bash
+swift test --filter AppStateTests
+swift test --filter AppDataServiceTests
+swift test --filter EntitlementResolutionMiMoTests
+swift test --filter MiMoQuotaServiceTests
+swift test --filter PersistenceTests
+```
+
 如果你直接用 Xcode：
 - Product -> Test
 
@@ -116,6 +126,25 @@ swift test
 8. 建立 Xcode 原生 macOS app 工程
 9. 配置 AppIcon / bundle / sandbox strategy
 10. 验证真实本地数据路径
+
+## Step 8: Validate Live Menu-Bar Behavior
+
+构建并打开真实 bundle：
+
+```bash
+./build.sh --open
+```
+
+检查：
+
+- `pgrep -fl AiUsage` 只保留一个真实运行进程，避免 debug binary 和 `dist/AiUsage.app` 混跑。
+- `defaults read com.jsbanana.aiusage | rg 'entitlement.target.mimo|entitlement.mimo'` 可看到 MiMo 选源或账号 mirror。
+- 打开菜单不会无条件刷新；状态不应每次都跳到“正在刷新数据”。
+- 点击 quota 卡片的刷新图标只刷新额度，不触发本机 usage import。
+- 点击“设置”后设置窗口应出现在最前面；设置内只出现本机 agent 显隐，不出现 quota URL / API Key / 总览套餐配置。
+- 主弹窗 tab 应为“总览 / 额度 / 已启用 agent”；MiMo 出现在“额度”tab 的厂商分组下，不作为 agent tab。
+- 在“额度”tab 可把菜单栏显示目标设为 Auto、厂商聚合或具体账号；切换后菜单栏柱状图跟随该目标。
+- MiMo token 可用时显示 token-plan 总额度；网络失败时保留上次成功额度并标记 stale；401 或缺 token 时提示重新登录。
 
 ## Known Constraints from Remote Development
 

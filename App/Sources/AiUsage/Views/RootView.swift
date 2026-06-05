@@ -9,6 +9,7 @@ struct RootView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @State private var showInlineLogin = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -16,13 +17,34 @@ struct RootView: View {
             if let activeEntitlementSummary = displayedEntitlementSummary {
                 entitlementSummaryCard(activeEntitlementSummary)
             }
-            summaryCard
+            if showInlineLogin && currentProviderSupportsAccounts {
+                inlineLoginForm
+            }
+            if appState.selectedTabID == "quota" {
+                quotaCard
+            } else {
+                summaryCard
+            }
             actionToolbar
             statusRow
         }
         .padding(10)
         .frame(minWidth: 380, idealWidth: 400, maxWidth: 430, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: appState.completedMiMoLoginSequence) { _, _ in
+            showInlineLogin = false
+        }
+    }
+
+    private var currentProviderSupportsAccounts: Bool {
+        guard let tabID = appState.selectedTabID, tabID != "overview" else { return false }
+        return tabID == "mimo"
+    }
+
+    private var inlineLoginForm: some View {
+        PanelCard {
+            MiMoCredentialFields()
+        }
     }
 
     private var providerTabs: some View {
@@ -38,13 +60,21 @@ struct RootView: View {
     private func entitlementSummaryCard(_ summary: EntitlementSummarySnapshot) -> some View {
         PanelCard {
             VStack(alignment: .leading, spacing: 8) {
-                QuotaSummarySection(summary: summary, compact: true)
-                if summary.status == .failed {
-                    Button("重新配置额度") {
-                        openSettings()
+                HStack {
+                    Text("套餐额度")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        Task { await appState.refreshCurrentEntitlement() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(.borderless)
+                    .help("刷新套餐额度")
+                    .disabled(appState.isEntitlementRefreshInProgress)
                 }
+                QuotaSummarySection(summary: summary, compact: true)
             }
         }
     }
@@ -65,6 +95,21 @@ struct RootView: View {
             } else {
                 SectionEmptyState(title: "暂无来源数据", message: "在下方添加或启用账号来源后，这里会显示统计。")
             }
+        }
+    }
+
+    private var quotaCard: some View {
+        PanelCard {
+            QuotaManagementView(
+                groups: appState.quotaGroups,
+                selectedMenuBarTarget: appState.menuBarTargetPreference,
+                setMenuBarTarget: { appState.setMenuBarTargetPreference($0) },
+                refresh: { Task { await appState.refreshCurrentEntitlement() } },
+                addMiMoAccount: {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "mimo-login")
+                }
+            )
         }
     }
 
@@ -119,26 +164,34 @@ struct RootView: View {
 
     private var actionToolbar: some View {
         PanelCard {
-            HStack(spacing: 8) {
-                CompactActionButton(title: appState.isLoading ? "刷新中…" : "刷新", systemImage: "arrow.clockwise") {
+            VStack(spacing: 0) {
+                if currentProviderSupportsAccounts {
+                    ActionListRow(title: "添加账号", systemImage: "person.badge.plus") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showInlineLogin.toggle()
+                        }
+                    }
+                }
+                ActionListRow(title: appState.isLoading ? "刷新中…" : "刷新", systemImage: "arrow.clockwise") {
                     Task { await appState.refresh() }
                 }
-                CompactActionButton(title: "管理账号", systemImage: "person.crop.circle.badge.plus") {
-                    openSettings()
+                if currentProviderSupportsAccounts {
+                    ActionListRow(title: "刷新额度", systemImage: "gauge.with.dots.needle.bottom.50percent") {
+                        Task { await appState.refreshCurrentEntitlement() }
+                    }
                 }
-                CompactActionButton(title: "Quota Targets", systemImage: "slider.horizontal.3") {
-                    openSettings()
-                }
-                CompactActionButton(title: "Dashboard", systemImage: "rectangle.grid.2x2") {
+                ActionListRow(title: "Dashboard", systemImage: "rectangle.grid.2x2") {
                     openWindow(id: "detail")
                 }
-                CompactActionButton(title: "关于 AiUsage", systemImage: "info.circle") {
+                ActionListRow(title: "设置", systemImage: "gearshape") {
+                    openSettingsFrontmost()
+                }
+                ActionListRow(title: "关于 AiUsage", systemImage: "info.circle") {
                     showAbout()
                 }
-                CompactActionButton(title: "退出", systemImage: "xmark.circle") {
+                ActionListRow(title: "退出", systemImage: "xmark.circle") {
                     NSApplication.shared.terminate(nil)
                 }
-                Spacer(minLength: 0)
             }
         }
     }
@@ -154,7 +207,8 @@ struct RootView: View {
         if appState.statusMessage.hasPrefix("启动失败") || appState.statusMessage.hasPrefix("刷新失败") {
             return .red
         }
-        if appState.statusMessage.localizedCaseInsensitiveContains("Quota 刷新失败") {
+        if appState.statusMessage.localizedCaseInsensitiveContains("Quota 刷新失败")
+            || appState.statusMessage.localizedCaseInsensitiveContains("额度刷新失败") {
             return .orange
         }
         return .secondary
@@ -178,6 +232,16 @@ struct RootView: View {
     private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
+    private func openSettingsFrontmost() {
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+        DispatchQueue.main.async {
+            NSApp.windows
+                .filter { $0.title.localizedCaseInsensitiveContains("设置") || $0.title.localizedCaseInsensitiveContains("settings") }
+                .forEach { $0.orderFrontRegardless() }
+        }
     }
 }
 
@@ -294,7 +358,7 @@ private struct ProviderTabMiniProgress: View {
     }
 }
 
-private struct CompactActionButton: View {
+private struct ActionListRow: View {
     let title: String
     let systemImage: String
     let action: () -> Void
@@ -302,35 +366,23 @@ private struct CompactActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .background(Color.primary.opacity(isHovered ? 0.08 : 0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.primary)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(Color.primary.opacity(isHovered ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(title)
-        .accessibilityLabel(Text(title))
-        .overlay(alignment: .top) {
-            if isHovered {
-                Text(title)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .fixedSize()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-                    }
-                    .offset(y: -30)
-                    .allowsHitTesting(false)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-            }
-        }
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(.easeOut(duration: 0.1)) {
                 isHovered = hovering
             }
         }

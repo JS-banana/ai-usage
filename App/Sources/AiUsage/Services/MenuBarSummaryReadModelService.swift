@@ -1,11 +1,16 @@
 import Foundation
 
-struct QuotaMenuBarGlyphState: Hashable, Sendable {
-    let leftRatio: Double
-    let rightRatio: Double
-    let isDimmed: Bool
+enum QuotaMenuBarGlyphState: Hashable, Sendable {
+    case dualWindows(leftRatio: Double, rightRatio: Double, isDimmed: Bool)
+    case singlePlan(ratio: Double, isDimmed: Bool)
+    case empty(kind: EmptyKind)
 
-    static let empty = QuotaMenuBarGlyphState(leftRatio: 0.18, rightRatio: 0.18, isDimmed: true)
+    enum EmptyKind: Hashable, Sendable {
+        case dual
+        case single
+    }
+
+    static let empty = QuotaMenuBarGlyphState.empty(kind: .dual)
 }
 
 struct MenuBarSummarySnapshot: Hashable, Sendable {
@@ -28,10 +33,29 @@ struct MenuBarSummaryReadModelService {
         entitlementsByTarget: [String: EntitlementSummarySnapshot]
     ) -> MenuBarSummarySnapshot {
         let targetID = activeTargetID ?? EntitlementTargetID.overview.storageKey
+        return makeSummary(
+            targetPreference: .target(targetID),
+            overview: overview,
+            entitlementsByTarget: entitlementsByTarget
+        )
+    }
+
+    func makeSummary(
+        targetPreference: QuotaMenuBarTargetPreference,
+        overview: OverviewPanelSnapshot?,
+        entitlementsByTarget: [String: EntitlementSummarySnapshot]
+    ) -> MenuBarSummarySnapshot {
+        let targetID: String
+        switch targetPreference {
+        case .auto:
+            targetID = autoTargetID(entitlementsByTarget: entitlementsByTarget) ?? EntitlementTargetID.overview.storageKey
+        case .target(let pinnedTargetID):
+            targetID = pinnedTargetID
+        }
         guard let summary = entitlementsByTarget[targetID] else {
             return MenuBarSummarySnapshot(
                 title: "AiUsage",
-                subtitle: "暂无数据",
+                subtitle: targetPreference == .auto ? "暂无数据" : "\(targetID) · 暂无额度数据",
                 status: .empty,
                 glyph: .empty
             )
@@ -44,6 +68,24 @@ struct MenuBarSummaryReadModelService {
             subtitle: subtitle,
             status: status,
             glyph: glyph(for: summary)
+        )
+    }
+
+    private func autoTargetID(entitlementsByTarget: [String: EntitlementSummarySnapshot]) -> String? {
+        let providerCandidates = entitlementsByTarget
+            .filter { $0.key != EntitlementTargetID.overview.storageKey }
+            .filter { _, summary in summary.status == .ready || summary.status == .stale }
+        if let chosen = providerCandidates.max(by: { lhs, rhs in progressScore(lhs.value) < progressScore(rhs.value) }) {
+            return chosen.key
+        }
+        return entitlementsByTarget[EntitlementTargetID.overview.storageKey] == nil ? nil : EntitlementTargetID.overview.storageKey
+    }
+
+    private func progressScore(_ summary: EntitlementSummarySnapshot) -> Double {
+        max(
+            summary.menuBarProgress ?? 0,
+            summary.primaryWindow.progress ?? 0,
+            summary.secondaryWindow.progress ?? 0
         )
     }
 
@@ -87,13 +129,22 @@ struct MenuBarSummaryReadModelService {
     private func glyph(for summary: EntitlementSummarySnapshot) -> QuotaMenuBarGlyphState {
         switch summary.status {
         case .ready, .stale:
-            return QuotaMenuBarGlyphState(
-                leftRatio: summary.primaryWindow.progress ?? 0.18,
-                rightRatio: summary.secondaryWindow.progress ?? 0.18,
+            if summary.sourceKind == .mimo {
+                let usedProgress = summary.menuBarProgress ?? summary.primaryWindow.progress
+                return .singlePlan(ratio: remainingRatio(for: usedProgress), isDimmed: false)
+            }
+            return .dualWindows(
+                leftRatio: remainingRatio(for: summary.primaryWindow.progress),
+                rightRatio: remainingRatio(for: summary.secondaryWindow.progress),
                 isDimmed: false
             )
         case .failed, .configuredNonlive, .unconfigured, .unavailable:
-            return .empty
+            return .empty(kind: summary.sourceKind == .mimo ? .single : .dual)
         }
+    }
+
+    private func remainingRatio(for usedProgress: Double?) -> Double {
+        guard let usedProgress else { return 0.18 }
+        return 1 - min(max(usedProgress, 0), 1)
     }
 }

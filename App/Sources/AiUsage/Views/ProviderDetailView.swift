@@ -10,12 +10,31 @@ struct ProviderDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let entitlementSummary = displayedEntitlementSummary {
-                    PanelDetailCard(title: "套餐额度") {
+                    PanelDetailCard(title: "套餐额度", trailing: {
+                        Button {
+                            Task { await appState.refreshCurrentEntitlement() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("刷新套餐额度")
+                        .disabled(appState.isEntitlementRefreshInProgress)
+                    }) {
                         QuotaSummarySection(summary: entitlementSummary)
                     }
                 }
 
-                if appState.selectedTabID == "overview", let overview = appState.overviewPanel {
+                if appState.selectedTabID == "quota" {
+                    PanelDetailCard(title: "账号额度") {
+                        QuotaManagementView(
+                            groups: appState.quotaGroups,
+                            selectedMenuBarTarget: appState.menuBarTargetPreference,
+                            setMenuBarTarget: { appState.setMenuBarTargetPreference($0) },
+                            refresh: { Task { await appState.refreshCurrentEntitlement() } },
+                            addMiMoAccount: {}
+                        )
+                    }
+                } else if appState.selectedTabID == "overview", let overview = appState.overviewPanel {
                     HStack(spacing: 16) {
                         DetailMetricCard(title: "今日", value: CompactNumberFormatting.fullString(overview.todayTokens))
                         DetailMetricCard(title: "本周", value: CompactNumberFormatting.fullString(overview.sevenDayTokens))
@@ -96,14 +115,38 @@ private struct DetailMetricCard: View {
     }
 }
 
-private struct PanelDetailCard<Content: View>: View {
+private struct PanelDetailCard<Trailing: View, Content: View>: View {
     let title: String
+    @ViewBuilder let trailing: Trailing
     @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        @ViewBuilder trailing: () -> Trailing,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.trailing = trailing()
+        self.content = content()
+    }
+
+    init(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) where Trailing == EmptyView {
+        self.title = title
+        self.trailing = EmptyView()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.headline)
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                trailing
+            }
             content
         }
         .padding(18)

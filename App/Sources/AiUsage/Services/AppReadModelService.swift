@@ -27,6 +27,7 @@ struct OverviewPanelSnapshot: Sendable {
 struct AppSnapshot: Sendable {
     let providerTabs: [ProviderTabItem]
     let providerPreferences: [ProviderPreferenceSnapshot]
+    let entitlementTargets: [EntitlementTargetDescriptor]
     let selectedTabID: String
     let overview: OverviewPanelSnapshot
     let panelsByID: [String: ProviderPanelSnapshot]
@@ -64,10 +65,15 @@ struct AppReadModelService {
         calendar.firstWeekday = 2
         let now = Date()
         let allDescriptors = sourceRegistry.providerDescriptors()
-        let providerPreferences = allDescriptors.map { AppPreferences.preferenceSnapshot(for: $0, userDefaults: userDefaults) }
-        let descriptors = allDescriptors.filter { AppPreferences.isSourceEnabled($0.id, userDefaults: userDefaults) }
+        let localUsageDescriptors = allDescriptors.filter { $0.capabilities.contains(.localUsageFacts) }
+        let providerPreferences = localUsageDescriptors.map { AppPreferences.preferenceSnapshot(for: $0, userDefaults: userDefaults) }
+        let entitlementTargets = EntitlementPreferences.descriptorTargets(providerDescriptors: allDescriptors)
+        let visibleLocalUsageDescriptors = allDescriptors.filter {
+            $0.capabilities.contains(.localUsageFacts)
+                && AppPreferences.isSourceEnabled($0.id, userDefaults: userDefaults)
+        }
 
-        if descriptors.isEmpty {
+        if visibleLocalUsageDescriptors.isEmpty {
             let overview = OverviewPanelSnapshot(
                 todayTokens: 0,
                 sevenDayTokens: 0,
@@ -87,9 +93,17 @@ struct AppReadModelService {
                         status: .unavailable,
                         branding: ProviderBrandCatalog.branding(for: "overview", fallbackName: "总览"),
                         usageProgress: nil
+                    ),
+                    ProviderTabItem(
+                        id: "quota",
+                        name: "额度",
+                        status: .ready,
+                        branding: ProviderBrandCatalog.branding(for: "quota", fallbackName: "额度"),
+                        usageProgress: nil
                     )
                 ],
                 providerPreferences: providerPreferences,
+                entitlementTargets: entitlementTargets,
                 selectedTabID: "overview",
                 overview: overview,
                 panelsByID: [:],
@@ -98,7 +112,7 @@ struct AppReadModelService {
             )
         }
 
-        let sourceIDs = descriptors.map(\.id)
+        let sourceIDs = visibleLocalUsageDescriptors.map(\.id)
         let startOfToday = calendar.startOfDay(for: now)
         let currentWeek = currentWeekWindow(containing: now, calendar: calendar)
         let todayRange = DateRange(start: startOfToday, end: now)
@@ -117,7 +131,7 @@ struct AppReadModelService {
         let cachedBreakdownByID = Dictionary(uniqueKeysWithValues: try await overallCachedBreakdown.filter { sourceIDs.contains($0.id) }.map { ($0.id, $0.value) })
 
         var panelsByID: [String: ProviderPanelSnapshot] = [:]
-        for descriptor in descriptors {
+        for descriptor in visibleLocalUsageDescriptors {
             let sourceID = descriptor.id
             let todaySummary = try await dashboardQuery.summary(range: todayRange, sourceIDs: [sourceID])
             let currentWeekSummary = try await dashboardQuery.summary(range: currentWeekRange, sourceIDs: [sourceID])
@@ -153,7 +167,7 @@ struct AppReadModelService {
         }
 
         let providerTabs = makeProviderTabs(
-            descriptors: descriptors,
+            descriptors: visibleLocalUsageDescriptors,
             sourceHealth: sourceHealth,
             panelsByID: panelsByID
         )
@@ -168,7 +182,7 @@ struct AppReadModelService {
             cachedTokens: cachedBreakdownByID.values.reduce(0, +),
             activeSources: todayMetrics.activeSources,
             trendPoints: normalizeWeekTrend(try await overallTrend, week: currentWeek, calendar: calendar),
-            providerRows: descriptors.map { descriptor in
+            providerRows: visibleLocalUsageDescriptors.map { descriptor in
                 let panel = panelsByID[descriptor.id]
                 return OverviewProviderRow(
                     id: descriptor.id,
@@ -184,6 +198,7 @@ struct AppReadModelService {
         return AppSnapshot(
             providerTabs: providerTabs,
             providerPreferences: providerPreferences,
+            entitlementTargets: entitlementTargets,
             selectedTabID: resolvedSelectedTabID(
                 preferredTabID: preferredTabID,
                 providerTabs: providerTabs,
@@ -246,6 +261,13 @@ struct AppReadModelService {
             branding: ProviderBrandCatalog.branding(for: "overview", fallbackName: "总览"),
             usageProgress: nil
         )
+        let quotaTab = ProviderTabItem(
+            id: "quota",
+            name: "额度",
+            status: .ready,
+            branding: ProviderBrandCatalog.branding(for: "quota", fallbackName: "额度"),
+            usageProgress: nil
+        )
 
         let providerTabs = descriptors.map { descriptor in
             let weeklyRequests = panelsByID[descriptor.id]?.sevenDayRequests ?? 0
@@ -258,7 +280,7 @@ struct AppReadModelService {
             )
         }
 
-        return [overviewTab] + providerTabs
+        return [overviewTab, quotaTab] + providerTabs
     }
 }
 

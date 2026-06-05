@@ -114,6 +114,86 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
         )
     }
 
+    public func persistQuotaSnapshot(_ quotaSnapshot: ProviderQuotaSnapshot) async throws {
+        try await manager.dbQueue.write { db in
+            try Self.upsertSource(
+                SourceDescriptor(
+                    id: quotaSnapshot.account.providerID,
+                    displayName: quotaSnapshot.account.providerID,
+                    builtIn: true,
+                    enabledByDefault: true
+                ),
+                db: db,
+                at: quotaSnapshot.account.updatedAt
+            )
+            try Self.upsertProviderAccount(quotaSnapshot.account, db: db)
+            try Self.upsertQuotaSnapshot(quotaSnapshot.snapshot, db: db)
+            try Self.replaceAllowanceWindows(quotaSnapshot.windows, snapshotID: quotaSnapshot.snapshot.id, db: db)
+        }
+    }
+
+    public func latestQuotaSnapshot(providerID: String, accountID: String) async throws -> ProviderQuotaSnapshot? {
+        try await manager.dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT
+                    pa.id AS account_id,
+                    pa.provider_id,
+                    pa.account_label,
+                    pa.backend_label,
+                    pa.created_at AS account_created_at,
+                    pa.updated_at AS account_updated_at,
+                    qs.id AS snapshot_id,
+                    qs.refresh_run_id,
+                    qs.captured_at,
+                    qs.freshness_date,
+                    qs.is_stale
+                FROM \(TableNames.providerAccounts) pa
+                INNER JOIN \(TableNames.accountSnapshots) qs ON qs.account_id = pa.id
+                WHERE pa.provider_id = ? AND pa.id = ?
+                ORDER BY qs.captured_at DESC
+                LIMIT 1
+                """,
+                arguments: [providerID, accountID]
+            ) else {
+                return nil
+            }
+
+            let snapshotID: String = row["snapshot_id"]
+            let windowRows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, snapshot_id, kind, used, limit_value, remaining, resets_at
+                FROM \(TableNames.allowanceWindows)
+                WHERE snapshot_id = ?
+                ORDER BY kind ASC
+                """,
+                arguments: [snapshotID]
+            )
+
+            return ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: row["account_id"],
+                    providerID: row["provider_id"],
+                    accountLabel: row["account_label"],
+                    backendLabel: row["backend_label"],
+                    createdAt: row["account_created_at"],
+                    updatedAt: row["account_updated_at"]
+                ),
+                snapshot: QuotaSnapshot(
+                    id: snapshotID,
+                    accountID: row["account_id"],
+                    refreshRunID: row["refresh_run_id"],
+                    capturedAt: row["captured_at"],
+                    freshnessDate: row["freshness_date"],
+                    isStale: row["is_stale"]
+                ),
+                windows: windowRows.map(Self.makeAllowanceWindow)
+            )
+        }
+    }
+
     public func dashboardMetrics(start: Date?, end: Date?) async throws -> DashboardMetrics {
         try await dashboardMetrics(start: start, end: end, sourceIDs: [])
     }
@@ -285,6 +365,10 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
                     WHERE severity = 'error'
                     GROUP BY source_id
                 ) diag ON diag.source_id = s.id
+                WHERE COALESCE(sf.file_count, 0) > 0
+                   OR COALESCE(ss.session_count, 0) > 0
+                   OR ir.finished_at IS NOT NULL
+                   OR COALESCE(diag.error_count, 0) > 0
                 ORDER BY s.display_name ASC
                 """
             )
@@ -520,6 +604,53 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
         }
     }
 
+    private static func upsertProviderAccount(_ account: ProviderAccount, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO \(TableNames.providerAccounts) (id, provider_id, account_label, backend_label, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                provider_id = excluded.provider_id,
+                account_label = excluded.account_label,
+                backend_label = excluded.backend_label,
+                updated_at = excluded.updated_at
+            """,
+            arguments: [account.id, account.providerID, account.accountLabel, account.backendLabel, account.createdAt, account.updatedAt]
+        )
+    }
+
+    private static func upsertQuotaSnapshot(_ snapshot: QuotaSnapshot, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO \(TableNames.accountSnapshots) (id, account_id, refresh_run_id, captured_at, freshness_date, is_stale)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                account_id = excluded.account_id,
+                refresh_run_id = excluded.refresh_run_id,
+                captured_at = excluded.captured_at,
+                freshness_date = excluded.freshness_date,
+                is_stale = excluded.is_stale
+            """,
+            arguments: [snapshot.id, snapshot.accountID, snapshot.refreshRunID, snapshot.capturedAt, snapshot.freshnessDate, snapshot.isStale]
+        )
+    }
+
+    private static func replaceAllowanceWindows(_ windows: [AllowanceWindow], snapshotID: String, db: Database) throws {
+        try db.execute(
+            sql: "DELETE FROM \(TableNames.allowanceWindows) WHERE snapshot_id = ?",
+            arguments: [snapshotID]
+        )
+        for window in windows {
+            try db.execute(
+                sql: """
+                INSERT INTO \(TableNames.allowanceWindows) (id, snapshot_id, kind, used, limit_value, remaining, resets_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [window.id, window.snapshotID, window.kind.rawValue, window.used, window.limit, window.remaining, window.resetsAt]
+            )
+        }
+    }
+
     private static func makeSessionSummary(row: Row) -> SessionSummary {
         SessionSummary(
             id: row["id"],
@@ -532,6 +663,18 @@ public actor LiveDatabase: ImportPersistence, AnalyticsQuerying {
             totalTokens: row["total_tokens"],
             requestCount: row["request_count"],
             filePath: row["file_path"]
+        )
+    }
+
+    private static func makeAllowanceWindow(row: Row) -> AllowanceWindow {
+        AllowanceWindow(
+            id: row["id"],
+            snapshotID: row["snapshot_id"],
+            kind: AllowanceWindowKind(rawValue: row["kind"]) ?? .monthly,
+            used: row["used"],
+            limit: row["limit_value"],
+            remaining: row["remaining"],
+            resetsAt: row["resets_at"]
         )
     }
 }

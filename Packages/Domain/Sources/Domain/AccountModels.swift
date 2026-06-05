@@ -117,3 +117,15 @@ public struct AccountDiagnostic: Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
     }
 }
+
+public struct ProviderQuotaSnapshot: Hashable, Sendable {
+    public let account: ProviderAccount
+    public let snapshot: QuotaSnapshot
+    public let windows: [AllowanceWindow]
+
+    public init(account: ProviderAccount, snapshot: QuotaSnapshot, windows: [AllowanceWindow]) {
+        self.account = account
+        self.snapshot = snapshot
+        self.windows = windows
+    }
+}

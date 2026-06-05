@@ -3,7 +3,6 @@ import AppKit
 
 @main
 struct AiUsageApp: App {
-    @Environment(\.scenePhase) private var scenePhase
     @State private var appState: AppState
     private let menuBarImageRenderer = QuotaMenuBarImageRenderer()
 
@@ -16,14 +15,16 @@ struct AiUsageApp: App {
         MenuBarExtra {
             RootView()
                 .environment(appState)
-                .task {
-                    await appState.startIfNeeded()
-                }
         } label: {
             Image(nsImage: menuBarImageRenderer.image(for: appState.menuBarSummary.glyph))
                 .renderingMode(.template)
                 .interpolation(.none)
+                .id(appState.menuBarSummary.glyph)
                 .accessibilityLabel("AiUsage 分组额度")
+                .task {
+                    await appState.startIfNeeded()
+                    appState.startAutoRefresh()
+                }
         }
         .menuBarExtraStyle(.window)
 
@@ -31,9 +32,15 @@ struct AiUsageApp: App {
             ProviderDetailView()
                 .environment(appState)
                 .task {
-                    await appState.startIfNeeded()
+                    Task { await appState.startIfNeeded() }
                 }
                 .frame(minWidth: 640, minHeight: 520)
+        }
+        .windowStyle(.automatic)
+
+        Window("MiMo 登录", id: "mimo-login") {
+            MiMoWebLoginWindowView()
+                .environment(appState)
         }
         .windowStyle(.automatic)
 
@@ -41,12 +48,6 @@ struct AiUsageApp: App {
             SettingsView()
                 .environment(appState)
                 .frame(width: 460, height: 520)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase == .active else { return }
-            Task {
-                await appState.refreshOnBecomeActive()
-            }
         }
     }
 

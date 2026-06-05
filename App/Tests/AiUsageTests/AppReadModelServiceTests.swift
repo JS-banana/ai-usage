@@ -21,12 +21,13 @@ final class AppReadModelServiceTests: XCTestCase {
 
         let snapshot = try await service.makeSnapshot(preferredTabID: nil)
 
-        XCTAssertEqual(snapshot.providerTabs.map(\.id), ["overview", "claude-code"])
+        XCTAssertEqual(snapshot.providerTabs.map(\.id), ["overview", "quota", "claude-code"])
         XCTAssertEqual(snapshot.providerPreferences.count, 2)
         XCTAssertTrue(snapshot.providerPreferences.contains(where: { $0.id == "codex" && $0.isEnabled == false }))
         XCTAssertEqual(snapshot.overview.providerRows.map(\.id), ["claude-code"])
         XCTAssertEqual(snapshot.providerTabs.first?.branding.accentToken, .overview)
         XCTAssertNil(snapshot.providerTabs.first?.usageProgress)
+        XCTAssertEqual(snapshot.providerTabs[1].branding.accentToken, .generic)
         XCTAssertEqual(snapshot.providerTabs.last?.branding.accentToken, .claude)
         XCTAssertEqual(snapshot.providerTabs.last?.usageProgress ?? 0, 1, accuracy: 0.001)
     }
@@ -44,6 +45,7 @@ final class AppReadModelServiceTests: XCTestCase {
 
         let snapshot = try await service.makeSnapshot(preferredTabID: nil)
 
+        XCTAssertEqual(snapshot.providerTabs.map(\.id), ["overview", "quota", "claude-code", "codex"])
         let claude = try XCTUnwrap(snapshot.providerTabs.first(where: { $0.id == "claude-code" }))
         let codex = try XCTUnwrap(snapshot.providerTabs.first(where: { $0.id == "codex" }))
 
@@ -51,6 +53,27 @@ final class AppReadModelServiceTests: XCTestCase {
         XCTAssertEqual(codex.branding.accentToken, .codex)
         XCTAssertEqual(claude.usageProgress ?? 0, 0.5, accuracy: 0.001)
         XCTAssertEqual(codex.usageProgress ?? 0, 1, accuracy: 0.001)
+    }
+
+    func testReadModelKeepsRemoteOnlyQuotaProvidersOutOfAgentTabs() async throws {
+        let defaults = UserDefaults(suiteName: "AppReadModelServiceRemoteOnlyTests")!
+        defaults.removePersistentDomain(forName: "AppReadModelServiceRemoteOnlyTests")
+
+        let service = AppReadModelService(
+            sourceRegistry: SourceRegistryWithRemoteQuotaStub(),
+            dashboardQuery: DashboardQueryStub(),
+            sourceHealthQuery: SourceHealthQueryStub(),
+            userDefaults: defaults
+        )
+
+        let snapshot = try await service.makeSnapshot(preferredTabID: "mimo")
+
+        XCTAssertEqual(snapshot.providerTabs.map(\.id), ["overview", "quota", "claude-code", "codex"])
+        XCTAssertNil(snapshot.providerTabs.first(where: { $0.id == "mimo" }))
+        XCTAssertNil(snapshot.panelsByID["mimo"])
+        XCTAssertFalse(snapshot.overview.providerRows.contains(where: { $0.id == "mimo" }))
+        XCTAssertEqual(snapshot.selectedTabID, "overview")
+        XCTAssertFalse(snapshot.providerPreferences.contains(where: { $0.id == "mimo" }))
     }
 
     func testBrandCatalogProvidesCodexBarResourceMappingsAndFallbackBranding() {
@@ -104,6 +127,25 @@ private struct SourceRegistryStub: SourceRegistry {
                 capabilities: [.localUsageFacts],
                 backendKind: .localLogs,
                 credentialKind: .none,
+                refreshPolicy: .manual
+            )
+        ]
+    }
+
+    func enabledParsers() -> [any UsageParser] { [] }
+}
+
+private struct SourceRegistryWithRemoteQuotaStub: SourceRegistry {
+    func allSources() -> [SourceDescriptor] { providerDescriptors().map(\.sourceDescriptor) }
+
+    func providerDescriptors() -> [ProviderDescriptor] {
+        SourceRegistryStub().providerDescriptors() + [
+            ProviderDescriptor(
+                id: "mimo",
+                displayName: "MiMo",
+                capabilities: [.accountQuotaSnapshots],
+                backendKind: .remoteAPI,
+                credentialKind: .accountSession,
                 refreshPolicy: .manual
             )
         ]

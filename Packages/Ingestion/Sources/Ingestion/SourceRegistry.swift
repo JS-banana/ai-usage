@@ -31,7 +31,7 @@ public struct StaticSourceRegistry: SourceRegistry {
     }
 
     private static func makeProviders(from parsers: [any UsageParser]) -> [ProviderDescriptor] {
-        parsers.map { parser in
+        let parserProviders = parsers.map { parser in
             ProviderDescriptor(
                 id: parser.sourceID,
                 displayName: displayName(for: parser.sourceID, fallback: parser.displayName),
@@ -41,6 +41,17 @@ public struct StaticSourceRegistry: SourceRegistry {
                 refreshPolicy: .manual
             )
         }
+        let virtualProviders = [
+            ProviderDescriptor(
+                id: "mimo",
+                displayName: "MiMo",
+                capabilities: [.accountQuotaSnapshots],
+                backendKind: .remoteAPI,
+                credentialKind: .accountSession,
+                refreshPolicy: .manual
+            ),
+        ]
+        return parserProviders + virtualProviders
     }
 
     private static func displayName(for sourceID: String, fallback: String) -> String {
