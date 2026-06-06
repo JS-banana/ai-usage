@@ -48,6 +48,32 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertTrue(visibleAlphas(single).contains { $0 > 0.15 && $0 < 0.5 })
     }
 
+    func testProviderBrandIconFindsPackagedAppResourceBundle() throws {
+        let appURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("AiUsage.app", isDirectory: true)
+        let resourcesURL = appURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+        let brandURL = resourcesURL
+            .appendingPathComponent("AiUsage_AiUsage.bundle", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("Brand", isDirectory: true)
+        try FileManager.default.createDirectory(at: brandURL, withIntermediateDirectories: true)
+        let iconURL = brandURL.appendingPathComponent("ProviderIcon-codex.svg")
+        try Data("<svg/>".utf8).write(to: iconURL)
+        defer { try? FileManager.default.removeItem(at: appURL.deletingLastPathComponent()) }
+
+        let resolvedURL = ProviderBrandIcon.url(
+            for: ProviderLogoResource(name: "ProviderIcon-codex"),
+            mainResourceURL: resourcesURL,
+            mainBundleURL: appURL,
+            sourceFilePath: #filePath
+        )
+
+        XCTAssertEqual(resolvedURL?.standardizedFileURL, iconURL.standardizedFileURL)
+    }
+
     func testRootViewSourceShowsActiveEntitlementAndCompactActions() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
         XCTAssertTrue(source.contains("displayedEntitlementSummary"))
