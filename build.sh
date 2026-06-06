@@ -54,6 +54,12 @@ find "$BIN_DIR" -maxdepth 1 -type d -name '*.bundle' -print0 | while IFS= read -
   cp -R "$bundle" "$RESOURCES_DIR/"
 done
 
+APP_RESOURCE_BUNDLE="$RESOURCES_DIR/${APP_NAME}_${APP_NAME}.bundle"
+if [[ ! -f "$APP_RESOURCE_BUNDLE/Resources/Brand/ProviderIcon-codex.svg" ]]; then
+  echo "Expected app resource bundle not found at: $APP_RESOURCE_BUNDLE" >&2
+  exit 1
+fi
+
 echo "==> Normalizing app bundle permissions"
 # Some SwiftPM resource bundles ship files as read-only (for example GRDB's
 # PrivacyInfo.xcprivacy). If we keep those modes in the distributed app,
