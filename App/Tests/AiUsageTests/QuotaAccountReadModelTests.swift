@@ -93,6 +93,239 @@ final class QuotaAccountReadModelTests: XCTestCase {
         XCTAssertEqual(groups.first?.accounts.first?.summary, accountSummary)
     }
 
+    func testSingleMiMoAccountHidesVendorAggregateSummary() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelSingleAccountSummaryTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: accountID,
+                credentials: MiMoCredentials(username: "897298966", passwordMD5: ""),
+                displayName: "MiMo 897298966",
+                email: "ooo***y@163.com",
+                planName: "Standard"
+            )
+        ], userDefaults: defaults)
+        let providerSummary = EntitlementSummarySnapshot(
+            targetID: .provider("mimo"),
+            title: "MiMo",
+            message: "",
+            updatedAt: Date(),
+            status: .ready,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: .init(
+                id: "mimo-provider-primary",
+                title: "套餐总额度",
+                primaryText: "29% used",
+                secondaryText: "",
+                footnoteText: "",
+                progress: 0.29
+            ),
+            secondaryWindow: .hidden(id: "mimo-provider-secondary"),
+            menuBarProgress: 0.29
+        )
+        let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: accountID)
+        let accountSummary = EntitlementSummarySnapshot(
+            targetID: .provider("mimo"),
+            title: "ooo***y@163.com",
+            message: "",
+            updatedAt: Date(),
+            status: .ready,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: .init(
+                id: "mimo-account-primary",
+                title: "账号额度",
+                detailText: "2.05B / 14.29B tokens",
+                primaryText: "14% used",
+                secondaryText: "expires 2026/6/27",
+                footnoteText: "",
+                progress: 0.143
+            ),
+            secondaryWindow: .hidden(id: "mimo-account-secondary"),
+            menuBarProgress: 0.143
+        )
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [
+                "mimo": providerSummary,
+                accountKey: accountSummary
+            ],
+            userDefaults: defaults
+        )
+
+        let group = try XCTUnwrap(groups.first)
+        XCTAssertNil(group.summary)
+        let account = try XCTUnwrap(group.accounts.first)
+        XCTAssertEqual(account.title, "ooo***y@163.com")
+        XCTAssertEqual(account.planName, "Standard")
+        XCTAssertEqual(account.summary, accountSummary)
+    }
+
+    func testMultipleMiMoAccountsShowVendorAggregateSummary() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelMultiAccountSummaryTests")
+        let firstID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let secondID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: firstID,
+                credentials: MiMoCredentials(username: "first", passwordMD5: ""),
+                displayName: "First",
+                email: "first@example.com",
+                planName: "Standard"
+            ),
+            MiMoAccount(
+                id: secondID,
+                credentials: MiMoCredentials(username: "second", passwordMD5: ""),
+                displayName: "Second",
+                email: "second@example.com",
+                planName: "Standard"
+            )
+        ], userDefaults: defaults)
+        let providerSummary = EntitlementSummarySnapshot.placeholder(
+            targetID: .provider("mimo"),
+            title: "MiMo",
+            message: "",
+            status: .ready,
+            sourceKind: .mimo,
+            primaryTitle: "套餐总额度",
+            secondaryTitle: "",
+            primaryText: "20% used",
+            secondaryText: "",
+            footnote: ""
+        )
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: ["mimo": providerSummary],
+            userDefaults: defaults
+        )
+
+        XCTAssertEqual(groups.first?.summary, providerSummary)
+        XCTAssertEqual(groups.first?.accounts.count, 2)
+    }
+
+    func testMiMoAccountRowHidesTechnicalUserIDWhenNoProfileExists() {
+        let defaults = makeDefaults("QuotaAccountReadModelDuplicateSubtitleTests")
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                credentials: MiMoCredentials(username: "897298966", passwordMD5: ""),
+                displayName: "MiMo 897298966"
+            )
+        ], userDefaults: defaults)
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults
+        )
+
+        XCTAssertEqual(groups.first?.accounts.first?.title, "MiMo Account")
+        XCTAssertEqual(groups.first?.accounts.first?.subtitle, "")
+    }
+
+    func testMiMoAccountRowsUseNonSecretMirrorsForDisplayState() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelMirrorStateTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let mirrorJSON = """
+        [{"id":"\(accountID.uuidString)","username":"mirrored@example.com","displayName":"MiMo Mirror"}]
+        """
+        defaults.set(Data(mirrorJSON.utf8), forKey: "entitlement.mimo.accounts.mirror")
+        defaults.set([accountID.uuidString], forKey: "entitlement.mimo.tokenPresence.mirror")
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults
+        )
+
+        let account = try XCTUnwrap(groups.first?.accounts.first)
+        XCTAssertEqual(account.title, "MiMo Mirror")
+        XCTAssertEqual(account.subtitle, "mirrored@example.com")
+        XCTAssertEqual(account.status, .ready)
+    }
+
+    func testMiMoAccountRowsPreferProfileEmailAndPlanNameOverUserID() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelProfileMirrorTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let mirrorJSON = """
+        [{
+            "id":"\(accountID.uuidString)",
+            "username":"897298966",
+            "displayName":"MiMo 897298966",
+            "email":"ooo***y@163.com",
+            "phone":"+86 150****8613",
+            "planName":"Standard"
+        }]
+        """
+        defaults.set(Data(mirrorJSON.utf8), forKey: "entitlement.mimo.accounts.mirror")
+        defaults.set([accountID.uuidString], forKey: "entitlement.mimo.tokenPresence.mirror")
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults
+        )
+
+        let account = try XCTUnwrap(groups.first?.accounts.first)
+        XCTAssertEqual(account.title, "ooo***y@163.com")
+        XCTAssertEqual(account.subtitle, "")
+        XCTAssertEqual(account.planName, "Standard")
+        XCTAssertFalse(account.title.contains("897298966"))
+        XCTAssertFalse(account.subtitle.contains("897298966"))
+        XCTAssertFalse(account.planName.contains("897298966"))
+    }
+
+    func testMiMoAccountRowsPreferDisplayMirrorOverKeychainAccounts() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelMirrorPreferredTests")
+        let keychainAccount = MiMoAccount(
+            id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+            credentials: MiMoCredentials(username: "keychain@example.com", passwordMD5: ""),
+            displayName: "Keychain Account"
+        )
+        let mirrorAccountID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let mirrorJSON = """
+        [{"id":"\(mirrorAccountID.uuidString)","username":"mirror@example.com","displayName":"Mirror Account"}]
+        """
+        EntitlementPreferences.setMiMoAccounts([keychainAccount], userDefaults: defaults)
+        defaults.set(Data(mirrorJSON.utf8), forKey: "entitlement.mimo.accounts.mirror")
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults
+        )
+
+        XCTAssertEqual(groups.first?.accounts.map(\.title), ["Mirror Account"])
+    }
+
+    func testMiMoAccountRowsFallbackToKeychainAccountsWhenDisplayMirrorMissing() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelKeychainFallbackTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: accountID,
+                credentials: MiMoCredentials(username: "legacy@example.com", passwordMD5: ""),
+                displayName: "Legacy MiMo"
+            )
+        ], userDefaults: defaults)
+        defaults.removeObject(forKey: "entitlement.mimo.accounts.mirror")
+        defaults.removeObject(forKey: "entitlement.mimo.tokenPresence.mirror")
+        EntitlementPreferences.setMiMoServiceToken(
+            MiMoServiceToken(serviceToken: "token", userId: "1", slh: "s", ph: "p", acquiredAt: Date()),
+            forAccount: accountID,
+            userDefaults: defaults
+        )
+        defaults.removeObject(forKey: "entitlement.mimo.tokenPresence.mirror")
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults
+        )
+
+        let account = try XCTUnwrap(groups.first?.accounts.first)
+        XCTAssertEqual(account.title, "Legacy MiMo")
+        XCTAssertEqual(account.subtitle, "legacy@example.com")
+        XCTAssertEqual(account.status, .ready)
+    }
+
     private func makeDefaults(_ name: String) -> UserDefaults {
         let defaults = UserDefaults(suiteName: name)!
         defaults.removePersistentDomain(forName: name)

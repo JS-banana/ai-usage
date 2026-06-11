@@ -27,11 +27,7 @@ struct ProviderDetailView: View {
                 if appState.selectedTabID == "quota" {
                     PanelDetailCard(title: "账号额度") {
                         QuotaManagementView(
-                            groups: appState.quotaGroups,
-                            selectedMenuBarTarget: appState.menuBarTargetPreference,
-                            setMenuBarTarget: { appState.setMenuBarTargetPreference($0) },
-                            refresh: { Task { await appState.refreshCurrentEntitlement() } },
-                            addMiMoAccount: {}
+                            groups: appState.quotaGroups
                         )
                     }
                 } else if appState.selectedTabID == "overview", let overview = appState.overviewPanel {

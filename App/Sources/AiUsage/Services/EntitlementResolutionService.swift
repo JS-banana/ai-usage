@@ -74,7 +74,10 @@ final class EntitlementResolutionService: @unchecked Sendable {
 
         if trigger != .manual,
            let fallback = await latestCachedMiMoSummary(accounts: accounts, descriptor: descriptor) {
-            return SummaryBundle(summary: fallback, accountSummaries: [:])
+            return SummaryBundle(
+                summary: fallback,
+                accountSummaries: await latestCachedMiMoAccountSummaries(accounts: accounts, descriptor: descriptor)
+            )
         }
 
         var tokens: [UUID: MiMoServiceToken] = [:]
@@ -85,7 +88,10 @@ final class EntitlementResolutionService: @unchecked Sendable {
         }
 
         if tokens.isEmpty, let fallback = await latestCachedMiMoSummary(accounts: accounts, descriptor: descriptor) {
-            return SummaryBundle(summary: fallback, accountSummaries: [:])
+            return SummaryBundle(
+                summary: fallback,
+                accountSummaries: await latestCachedMiMoAccountSummaries(accounts: accounts, descriptor: descriptor)
+            )
         }
 
         guard !tokens.isEmpty else {
@@ -104,10 +110,11 @@ final class EntitlementResolutionService: @unchecked Sendable {
             descriptor: descriptor,
             now: now
         )
-        return SummaryBundle(
-            summary: summary,
-            accountSummaries: perAccountMiMoSummaries(results: results, accounts: accounts)
-        )
+        var accountSummaries = perAccountMiMoSummaries(results: results, accounts: accounts)
+        if accountSummaries.isEmpty {
+            accountSummaries = await latestCachedMiMoAccountSummaries(accounts: accounts, descriptor: descriptor)
+        }
+        return SummaryBundle(summary: summary, accountSummaries: accountSummaries)
     }
 
     func resolveSummary(
@@ -193,14 +200,14 @@ final class EntitlementResolutionService: @unchecked Sendable {
             guard var snapshot = result.snapshot, let account = accountByID[accountID] else { continue }
             snapshot = EntitlementSummarySnapshot(
                 targetID: snapshot.targetID,
-                title: account.displayName,
+                title: displayLabel(for: account, profile: result.profile),
                 message: snapshot.message,
                 updatedAt: snapshot.updatedAt,
                 status: snapshot.status,
                 sourceKind: snapshot.sourceKind,
                 provenance: snapshot.provenance,
                 derivedFromTitle: snapshot.derivedFromTitle,
-                primaryWindow: snapshot.primaryWindow,
+                primaryWindow: accountQuotaWindow(from: snapshot.primaryWindow),
                 secondaryWindow: snapshot.secondaryWindow,
                 extraWindows: snapshot.extraWindows,
                 menuBarProgress: snapshot.menuBarProgress
@@ -253,9 +260,9 @@ final class EntitlementResolutionService: @unchecked Sendable {
         let primaryWindow = EntitlementWindowSnapshot(
             id: "\(targetID.storageKey)-mimo-primary",
             title: "套餐总额度",
-            detailText: tokenUsageDetailText(used: totalUsed, limit: totalLimit),
+            detailText: "",
             primaryText: usedPercentText(planProgress),
-            secondaryText: compactDateText(earliestExpiry),
+            secondaryText: "",
             footnoteText: "",
             progress: planProgress
         )
@@ -275,18 +282,119 @@ final class EntitlementResolutionService: @unchecked Sendable {
             secondaryWindow: secondaryWindow,
             menuBarProgress: planProgress
         )
-        if isPartial == false {
-            await persistMiMoSnapshotIfPossible(
-                totalUsed: totalUsed,
-                totalLimit: totalLimit,
-                expiresAt: earliestExpiry,
-                capturedAt: now
-            )
-        }
+        persistMiMoDisplayMetadata(successfulByAccount)
+        await persistMiMoSnapshotsIfPossible(
+            successfulByAccount: successfulByAccount,
+            allAccountCount: accounts.count,
+            totalUsed: totalUsed,
+            totalLimit: totalLimit,
+            aggregateExpiresAt: earliestExpiry,
+            capturedAt: now,
+            isPartial: isPartial
+        )
         return summary
     }
 
-    private func persistMiMoSnapshotIfPossible(
+    private func persistMiMoDisplayMetadata(_ successfulAccounts: [(UUID, MiMoAccount, AccountFetchResult)]) {
+        for (accountID, _, result) in successfulAccounts {
+            EntitlementPreferences.updateMiMoAccountDisplayMetadata(
+                id: accountID,
+                profile: result.profile,
+                planName: result.planName,
+                userDefaults: userDefaults
+            )
+        }
+    }
+
+    private func persistMiMoSnapshotsIfPossible(
+        successfulByAccount: [(UUID, MiMoAccount, AccountFetchResult)],
+        allAccountCount: Int,
+        totalUsed: Int,
+        totalLimit: Int,
+        aggregateExpiresAt: Date?,
+        capturedAt: Date,
+        isPartial: Bool
+    ) async {
+        guard let quotaSnapshotStore else { return }
+        for (accountID, account, result) in successfulByAccount {
+            guard result.totalLimit > 0 else { continue }
+            let accountCapturedAt = result.capturedAt ?? capturedAt
+            let snapshotID = StableQuotaSnapshotID.make(
+                providerID: "mimo",
+                accountID: accountID.uuidString,
+                capturedAt: accountCapturedAt
+            )
+            let providerAccount = ProviderAccount(
+                id: accountID.uuidString,
+                providerID: "mimo",
+                accountLabel: displayLabel(for: account, profile: result.profile),
+                backendLabel: "xiaomi",
+                createdAt: accountCapturedAt,
+                updatedAt: accountCapturedAt
+            )
+            let snapshot = QuotaSnapshot(
+                id: snapshotID,
+                accountID: accountID.uuidString,
+                refreshRunID: nil,
+                capturedAt: accountCapturedAt,
+                freshnessDate: accountCapturedAt,
+                isStale: false
+            )
+            let window = AllowanceWindow(
+                id: "\(snapshotID)-token-plan",
+                snapshotID: snapshotID,
+                kind: .monthly,
+                used: Double(result.totalUsed),
+                limit: Double(result.totalLimit),
+                remaining: Double(max(0, result.totalLimit - result.totalUsed)),
+                resetsAt: result.expiresAt
+            )
+            try? await quotaSnapshotStore.persistQuotaSnapshot(
+                ProviderQuotaSnapshot(account: providerAccount, snapshot: snapshot, windows: [window])
+            )
+        }
+
+        guard allAccountCount > 1, isPartial == false else { return }
+        await persistMiMoAggregateSnapshotIfPossible(
+            totalUsed: totalUsed,
+            totalLimit: totalLimit,
+            expiresAt: aggregateExpiresAt,
+            capturedAt: capturedAt
+        )
+    }
+
+    private func displayLabel(for account: MiMoAccount, profile: MiMoAccountProfile?) -> String {
+        for value in [
+            profile?.email,
+            profile?.platformEmail,
+            profile?.phone,
+            profile?.userName,
+            profile?.nickName,
+            account.email,
+            account.platformEmail,
+            account.phone,
+            account.displayName
+        ] {
+            let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty == false, isTechnicalMiMoID(trimmed) == false {
+                return trimmed
+            }
+        }
+        return "MiMo Account"
+    }
+
+    private func isTechnicalMiMoID(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.range(of: #"^\d+$"#, options: .regularExpression) != nil {
+            return true
+        }
+        if trimmed.range(of: #"^MiMo\s+\d+$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return true
+        }
+        return false
+    }
+
+    private func persistMiMoAggregateSnapshotIfPossible(
         totalUsed: Int,
         totalLimit: Int,
         expiresAt: Date?,
@@ -330,6 +438,20 @@ final class EntitlementResolutionService: @unchecked Sendable {
         descriptor: EntitlementTargetDescriptor
     ) async -> EntitlementSummarySnapshot? {
         guard let quotaSnapshotStore else { return nil }
+        if accounts.count == 1, let account = accounts.first {
+            if let cached = try? await quotaSnapshotStore.latestQuotaSnapshot(
+                providerID: "mimo",
+                accountID: account.id.uuidString
+            ), let summary = cachedMiMoSummary(
+                cached,
+                descriptor: descriptor,
+                title: displayLabel(for: account, profile: nil),
+                windowTitle: "账号额度",
+                includeUsageDetail: true
+            ) {
+                return summary
+            }
+        }
         if let cached = try? await quotaSnapshotStore.latestQuotaSnapshot(
             providerID: "mimo",
             accountID: MiMoAggregateSnapshotAccount.accountID
@@ -350,9 +472,37 @@ final class EntitlementResolutionService: @unchecked Sendable {
         return nil
     }
 
+    private func latestCachedMiMoAccountSummaries(
+        accounts: [MiMoAccount],
+        descriptor: EntitlementTargetDescriptor
+    ) async -> [String: EntitlementSummarySnapshot] {
+        guard let quotaSnapshotStore else { return [:] }
+
+        var summaries: [String: EntitlementSummarySnapshot] = [:]
+        for account in accounts {
+            guard let cached = try? await quotaSnapshotStore.latestQuotaSnapshot(
+                providerID: "mimo",
+                accountID: account.id.uuidString
+            ), let summary = cachedMiMoSummary(
+                cached,
+                descriptor: descriptor,
+                title: displayLabel(for: account, profile: nil),
+                windowTitle: "账号额度",
+                includeUsageDetail: true
+            ) else {
+                continue
+            }
+            summaries[QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: account.id)] = summary
+        }
+        return summaries
+    }
+
     private func cachedMiMoSummary(
         _ cached: ProviderQuotaSnapshot,
-        descriptor: EntitlementTargetDescriptor
+        descriptor: EntitlementTargetDescriptor,
+        title: String? = nil,
+        windowTitle: String = "套餐总额度",
+        includeUsageDetail: Bool = false
     ) -> EntitlementSummarySnapshot? {
         guard let window = cached.windows.first(where: { $0.kind == .monthly }) ?? cached.windows.first else {
             return nil
@@ -362,16 +512,16 @@ final class EntitlementResolutionService: @unchecked Sendable {
         let progress = limit > 0 ? Double(used) / Double(limit) : 0
         let primaryWindow = EntitlementWindowSnapshot(
             id: "\(descriptor.targetID.storageKey)-mimo-primary",
-            title: "套餐总额度",
-            detailText: tokenUsageDetailText(used: used, limit: limit),
+            title: windowTitle,
+            detailText: includeUsageDetail ? tokenUsageDetailText(used: used, limit: limit) : "",
             primaryText: usedPercentText(progress),
-            secondaryText: compactDateText(window.resetsAt),
-            footnoteText: "上次成功刷新 \(cached.snapshot.freshnessDate.formatted(date: .numeric, time: .shortened))",
+            secondaryText: includeUsageDetail ? compactDateText(window.resetsAt) : "",
+            footnoteText: "显示上次成功数据 · \(cached.snapshot.freshnessDate.formatted(date: .numeric, time: .shortened))",
             progress: progress
         )
         return EntitlementSummarySnapshot(
             targetID: descriptor.targetID,
-            title: descriptor.name,
+            title: title ?? descriptor.name,
             message: "MiMo 额度刷新失败，显示上次成功数据。",
             updatedAt: cached.snapshot.freshnessDate,
             status: .stale,
@@ -384,13 +534,20 @@ final class EntitlementResolutionService: @unchecked Sendable {
         )
     }
 
-    private func usedPercentText(_ progress: Double) -> String {
-        "\(min(max(progress, 0), 1).formatted(.percent.precision(.fractionLength(0)))) used"
+    private func accountQuotaWindow(from window: EntitlementWindowSnapshot) -> EntitlementWindowSnapshot {
+        EntitlementWindowSnapshot(
+            id: window.id,
+            title: "账号额度",
+            detailText: window.detailText,
+            primaryText: window.primaryText,
+            secondaryText: window.secondaryText,
+            footnoteText: window.footnoteText,
+            progress: window.progress
+        )
     }
 
-    private func trimmed(_ value: Double) -> String {
-        String(format: "%.2f", value)
-            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    private func usedPercentText(_ progress: Double) -> String {
+        "\(min(max(progress, 0), 1).formatted(.percent.precision(.fractionLength(0)))) used"
     }
 
     private func compactDateText(_ date: Date?) -> String {
@@ -410,10 +567,13 @@ final class EntitlementResolutionService: @unchecked Sendable {
         if absolute >= 1_000_000 {
             return "\(trimmed(Double(value) / 1_000_000))M"
         }
-        if absolute >= 1_000 {
-            return "\(trimmed(Double(value) / 1_000))K"
-        }
         return value.formatted()
+    }
+
+    private func trimmed(_ value: Double) -> String {
+        let formatted = String(format: "%.2f", value)
+        return formatted
+            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
     }
 
     private func deriveOverviewSummary(
@@ -441,7 +601,7 @@ final class EntitlementResolutionService: @unchecked Sendable {
                 provenance: .derived,
                 primaryText: "未配置",
                 secondaryText: "暂无可用额度来源",
-                footnote: "在额度 tab 管理账号和菜单栏显示目标"
+                footnote: "在额度 tab 管理账号"
             )
         }
 
@@ -501,7 +661,7 @@ final class EntitlementResolutionService: @unchecked Sendable {
             sourceKind: nil,
             primaryText: "未配置",
             secondaryText: "选择官方或第三方来源",
-            footnote: "在额度 tab 管理账号和菜单栏显示目标"
+            footnote: "在额度 tab 管理账号"
         )
     }
 

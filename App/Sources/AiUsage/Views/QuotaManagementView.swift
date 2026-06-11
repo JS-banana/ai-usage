@@ -2,33 +2,9 @@ import SwiftUI
 
 struct QuotaManagementView: View {
     let groups: [QuotaVendorGroupSnapshot]
-    let selectedMenuBarTarget: QuotaMenuBarTargetPreference
-    let setMenuBarTarget: (QuotaMenuBarTargetPreference) -> Void
-    let refresh: () -> Void
-    let addMiMoAccount: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("菜单栏")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Button {
-                    setMenuBarTarget(.auto)
-                } label: {
-                    Label("Auto", systemImage: selectedMenuBarTarget == .auto ? "checkmark.circle.fill" : "circle")
-                }
-                .buttonStyle(.borderless)
-                Spacer()
-                Button {
-                    refresh()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("刷新额度")
-            }
-
             if groups.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("暂无额度账号")
@@ -48,23 +24,15 @@ struct QuotaManagementView: View {
     }
 
     private func quotaVendorGroup(_ group: QuotaVendorGroupSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(group.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Spacer()
-                Button {
-                    setMenuBarTarget(group.menuBarTarget)
-                } label: {
-                    Image(systemName: selectedMenuBarTarget == group.menuBarTarget ? "pin.fill" : "pin")
-                }
-                .buttonStyle(.borderless)
-                .help("菜单栏显示 \(group.title)")
             }
 
-            if group.summary.status != .unconfigured {
-                QuotaSummarySection(summary: group.summary, compact: true)
+            if let summary = group.summary, summary.status != .unconfigured {
+                QuotaSummarySection(summary: summary, compact: true)
             }
 
             VStack(spacing: 0) {
@@ -80,22 +48,10 @@ struct QuotaManagementView: View {
                         Divider()
                     }
                 }
-                Button {
-                    addMiMoAccount()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "person.badge.plus")
-                        Text("添加账号")
-                        Spacer()
-                    }
-                    .font(.caption)
-                    .padding(.vertical, 7)
-                }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -104,22 +60,27 @@ struct QuotaManagementView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(account.title)
                     .font(.caption.weight(.medium))
-                Text(account.subtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if account.subtitle.isEmpty == false {
+                    Text(account.subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
-            Text(statusText(account.status))
-                .font(.caption2)
-                .foregroundStyle(account.status == .ready ? Color.secondary : Color.orange)
-            Button {
-                setMenuBarTarget(account.menuBarTarget)
-            } label: {
-                Image(systemName: selectedMenuBarTarget == account.menuBarTarget ? "pin.fill" : "pin")
+            if account.planName.isEmpty == false {
+                Text(account.planName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
             }
-            .buttonStyle(.borderless)
-            .help("菜单栏显示 \(account.title)")
+            if account.status != .ready {
+                Text(statusText(account.status))
+                    .font(.caption2)
+                    .foregroundStyle(Color.orange)
+            }
         }
         .padding(.vertical, 7)
     }
@@ -129,7 +90,7 @@ struct QuotaManagementView: View {
         case .ready:
             return "ready"
         case .loginRequired:
-            return "login"
+            return "login required"
         }
     }
 }

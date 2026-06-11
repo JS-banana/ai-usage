@@ -243,6 +243,10 @@ enum EntitlementPreferences {
         return []
     }
 
+    static func mimoAccountDisplayMirror(userDefaults: UserDefaults = .standard) -> [MiMoAccount] {
+        readMiMoAccountsMirror(userDefaults: userDefaults) ?? mimoAccounts(userDefaults: userDefaults)
+    }
+
     static func setMiMoAccounts(_ accounts: [MiMoAccount], userDefaults: UserDefaults = .standard) {
         guard let data = try? JSONEncoder().encode(accounts) else { return }
         setMiMoAccountsMirror(accounts, userDefaults: userDefaults)
@@ -265,7 +269,11 @@ enum EntitlementPreferences {
             MiMoAccount(
                 id: mirror.id,
                 credentials: MiMoCredentials(username: mirror.username, passwordMD5: ""),
-                displayName: mirror.displayName
+                displayName: mirror.displayName,
+                email: mirror.email,
+                phone: mirror.phone,
+                platformEmail: mirror.platformEmail,
+                planName: mirror.planName
             )
         }
     }
@@ -275,7 +283,11 @@ enum EntitlementPreferences {
             MiMoAccountMirror(
                 id: account.id,
                 username: account.credentials.username,
-                displayName: account.displayName
+                displayName: account.displayName,
+                email: account.email,
+                phone: account.phone,
+                platformEmail: account.platformEmail,
+                planName: account.planName
             )
         }
         guard let data = try? JSONEncoder().encode(mirrors) else { return }
@@ -290,7 +302,11 @@ enum EntitlementPreferences {
             savedAccount = MiMoAccount(
                 id: existing[index].id,
                 credentials: account.credentials,
-                displayName: account.displayName
+                displayName: account.displayName,
+                email: account.email,
+                phone: account.phone,
+                platformEmail: account.platformEmail,
+                planName: account.planName
             )
             existing[index] = savedAccount
         } else {
@@ -299,6 +315,27 @@ enum EntitlementPreferences {
         }
         setMiMoAccounts(existing, userDefaults: userDefaults)
         return savedAccount
+    }
+
+    static func updateMiMoAccountDisplayMetadata(
+        id: UUID,
+        profile: MiMoAccountProfile?,
+        planName: String?,
+        userDefaults: UserDefaults = .standard
+    ) {
+        var existing = mimoAccounts(userDefaults: userDefaults)
+        guard let index = existing.firstIndex(where: { $0.id == id }) else { return }
+        let account = existing[index]
+        existing[index] = MiMoAccount(
+            id: account.id,
+            credentials: account.credentials,
+            displayName: profile?.preferredDisplayName ?? account.displayName,
+            email: profile?.email ?? account.email,
+            phone: profile?.phone ?? account.phone,
+            platformEmail: profile?.platformEmail ?? account.platformEmail,
+            planName: planName ?? account.planName
+        )
+        setMiMoAccounts(existing, userDefaults: userDefaults)
     }
 
     static func removeMiMoAccount(id: UUID, userDefaults: UserDefaults = .standard) {
@@ -339,9 +376,27 @@ enum EntitlementPreferences {
     // MARK: - MiMo ServiceToken (Keychain, keyed by account ID)
 
     private static let mimoTokenService = "ai-usage.mimo.service-token"
+    private static let mimoTokenPresenceMirrorKey = "entitlement.mimo.tokenPresence.mirror"
 
     private static func mimoTokenKeyPrefix(forAccount accountID: UUID) -> String {
         "entitlement.mimo.account.\(accountID.uuidString).token."
+    }
+
+    static func mimoAccountIDsWithStoredToken(userDefaults: UserDefaults = .standard) -> Set<UUID> {
+        let mirroredIDs = Set(
+            (userDefaults.stringArray(forKey: mimoTokenPresenceMirrorKey) ?? [])
+                .compactMap(UUID.init(uuidString:))
+        )
+        if mirroredIDs.isEmpty == false {
+            return mirroredIDs
+        }
+        return Set(
+            mimoAccounts(userDefaults: userDefaults)
+                .filter { account in
+                    mimoServiceToken(forAccount: account.id, userDefaults: userDefaults) != nil
+                }
+                .map(\.id)
+        )
     }
 
     static func mimoServiceToken(
@@ -385,6 +440,7 @@ enum EntitlementPreferences {
         ]
         SecItemAdd(addQuery as CFDictionary, nil)
         clearLegacyMiMoServiceToken(forAccount: accountID, userDefaults: userDefaults)
+        setMiMoTokenPresence(true, forAccount: accountID, userDefaults: userDefaults)
     }
 
     static func clearMiMoServiceToken(
@@ -393,6 +449,22 @@ enum EntitlementPreferences {
     ) {
         deleteMiMoTokenKeychain(forAccount: accountID, userDefaults: userDefaults)
         clearLegacyMiMoServiceToken(forAccount: accountID, userDefaults: userDefaults)
+        setMiMoTokenPresence(false, forAccount: accountID, userDefaults: userDefaults)
+    }
+
+    private static func setMiMoTokenPresence(_ isPresent: Bool, forAccount accountID: UUID, userDefaults: UserDefaults) {
+        var ids = mimoAccountIDsWithStoredToken(userDefaults: userDefaults)
+        if isPresent {
+            ids.insert(accountID)
+        } else {
+            ids.remove(accountID)
+        }
+        let values = ids.map(\.uuidString).sorted()
+        if values.isEmpty {
+            userDefaults.removeObject(forKey: mimoTokenPresenceMirrorKey)
+        } else {
+            userDefaults.set(values, forKey: mimoTokenPresenceMirrorKey)
+        }
     }
 
     private static func readMiMoTokenKeychain(forAccount accountID: UUID, userDefaults: UserDefaults) -> Data? {
@@ -476,4 +548,8 @@ private struct MiMoAccountMirror: Codable {
     let id: UUID
     let username: String
     let displayName: String
+    let email: String?
+    let phone: String?
+    let platformEmail: String?
+    let planName: String?
 }

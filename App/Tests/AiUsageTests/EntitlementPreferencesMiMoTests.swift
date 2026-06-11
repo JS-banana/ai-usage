@@ -96,6 +96,7 @@ final class EntitlementPreferencesMiMoTests: XCTestCase {
         XCTAssertEqual(loaded?.userId, "123")
         XCTAssertEqual(loaded?.slh, "slh_val")
         XCTAssertEqual(loaded?.ph, "ph_val")
+        XCTAssertEqual(EntitlementPreferences.mimoAccountIDsWithStoredToken(userDefaults: defaults), [accountA])
     }
 
     func testSetMiMoServiceTokenDoesNotPersistSecretInUserDefaults() {
@@ -113,6 +114,7 @@ final class EntitlementPreferencesMiMoTests: XCTestCase {
         XCTAssertNil(defaults.string(forKey: legacyKeyPrefix + "serviceToken"))
         XCTAssertNil(defaults.string(forKey: legacyKeyPrefix + "slh"))
         XCTAssertNil(defaults.string(forKey: legacyKeyPrefix + "ph"))
+        XCTAssertFalse((defaults.stringArray(forKey: "entitlement.mimo.tokenPresence.mirror") ?? []).contains("svc_tok"))
     }
 
     func testMiMoServiceTokenIsolatedByAccountID() {
@@ -141,6 +143,7 @@ final class EntitlementPreferencesMiMoTests: XCTestCase {
         EntitlementPreferences.clearMiMoServiceToken(forAccount: accountA, userDefaults: defaults)
 
         XCTAssertNil(EntitlementPreferences.mimoServiceToken(forAccount: accountA, userDefaults: defaults))
+        XCTAssertFalse(EntitlementPreferences.mimoAccountIDsWithStoredToken(userDefaults: defaults).contains(accountA))
     }
 
     func testSetMiMoServiceTokenOverwritesPrevious() {

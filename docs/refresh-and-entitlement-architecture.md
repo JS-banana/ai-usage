@@ -25,7 +25,7 @@ These domains can be shown together, but failure in one domain must not erase th
 - Settings owns local agent visibility only. It should not configure quota sources or remote accounts.
 - The main menu owns runtime tabs: `总览`, `额度`, then enabled local-usage agent tabs.
 - Remote-only providers such as MiMo appear under the `额度` tab as vendor/account groups, not as agent tabs.
-- The menu bar quota glyph is driven by an explicit quota target preference. `Auto` chooses the available quota with the lowest remaining ratio; a pinned vendor/account stays pinned even if it later becomes stale or unavailable.
+- The quota tab does not expose menu-bar target controls. The menu bar quota glyph uses the internal automatic target selection and chooses the available quota with the lowest remaining ratio.
 
 ## Refresh Flow
 
@@ -43,7 +43,7 @@ These domains can be shown together, but failure in one domain must not erase th
 - `refreshAll`: compose usage then entitlement refresh for explicit full refresh.
 - `refreshIfStale`: apply the domain TTL rules before doing work.
 
-The menu opening path must not call refresh directly. App startup and the background scheduler use `refreshIfStale`; the quota refresh icon calls entitlement refresh only.
+The menu opening path must not call refresh directly. App startup and the background scheduler use `refreshIfStale`; the quota tab bottom action calls entitlement refresh only.
 
 ## MiMo Rules
 
@@ -51,7 +51,9 @@ The menu opening path must not call refresh directly. App startup and the backgr
 - Background refresh only reuses the stored token.
 - The app never silently retries username/password login in the background.
 - `/api/v1/tokenPlan/usage` is the primary quota endpoint.
-- `/api/v1/tokenPlan/detail` may provide expiry.
+- `/api/v1/tokenPlan/detail` provides plan name and may provide expiry.
+- `/api/v1/userProfile` provides display identity such as email or phone for account rows.
+- MiMo entitlement refresh is account-first. Each successful account refresh persists a real account snapshot; aggregate snapshots are derived for multi-account display only. Cached fallback UI must label cached data explicitly with the previous successful snapshot time.
 - `/api/v1/balance` remains intentionally paused.
 - A successful MiMo quota response is persisted to schema v3 account snapshot tables.
 - If a later MiMo refresh fails because of network, decoding, or server error, the UI may show the latest successful snapshot as stale.

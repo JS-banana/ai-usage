@@ -74,16 +74,14 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertEqual(resolvedURL?.standardizedFileURL, iconURL.standardizedFileURL)
     }
 
-    func testRootViewSourceShowsActiveEntitlementAndCompactActions() throws {
+    func testRootViewSourceKeepsCompactActionsInStableShell() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
-        XCTAssertTrue(source.contains("displayedEntitlementSummary"))
-        XCTAssertTrue(source.contains("entitlementSummaryCard(activeEntitlementSummary)"))
-        XCTAssertTrue(source.contains("summary.status != .unconfigured"))
+        XCTAssertTrue(source.contains("primaryContentCard"))
         XCTAssertTrue(source.contains("actionToolbar"))
         XCTAssertTrue(source.contains("ActionListRow"))
         XCTAssertTrue(source.contains("添加账号"))
-        XCTAssertTrue(source.contains("completedMiMoLoginSequence"))
-        XCTAssertTrue(source.contains("showInlineLogin = false"))
+        XCTAssertTrue(source.contains("openMiMoLoginWindow()"))
+        XCTAssertTrue(source.contains("appState.prepareMiMoLoginSession()"))
         XCTAssertTrue(source.contains("关于 AiUsage"))
         XCTAssertTrue(source.contains("退出"))
         XCTAssertTrue(source.contains(".onHover"))
@@ -94,6 +92,17 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertFalse(source.contains("管理账号"))
         XCTAssertFalse(source.contains("Quota Targets"))
         XCTAssertFalse(source.contains("重新配置额度"))
+        XCTAssertFalse(source.contains("entitlementSummaryCard(activeEntitlementSummary)"))
+        XCTAssertFalse(source.contains("private var displayedEntitlementSummary"))
+    }
+
+    func testRootViewKeepsPrimaryContentCardStableForQuotaSwitch() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+        XCTAssertTrue(source.contains("primaryContentCard"))
+        XCTAssertTrue(source.contains("primaryContentMinHeight"))
+        XCTAssertTrue(source.contains("transaction.animation = nil"))
+        XCTAssertFalse(source.contains("if appState.selectedTabID == \"quota\" {\n                quotaCard\n            } else {\n                summaryCard\n            }"))
+        XCTAssertFalse(source.contains("if let activeEntitlementSummary = displayedEntitlementSummary"))
     }
 
     func testAppShellUsesRenderedTemplateImageForMenuBarExtra() throws {
@@ -239,16 +248,55 @@ final class MenuBarShapeTests: XCTestCase {
         let quotaManagementSource = try sourceText(path: "App/Sources/AiUsage/Views/QuotaManagementView.swift")
 
         XCTAssertTrue(appStateSource.contains("isEntitlementRefreshInProgress"))
-        XCTAssertTrue(rootSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
         XCTAssertTrue(providerDetailSource.contains(".disabled(appState.isEntitlementRefreshInProgress)"))
         XCTAssertFalse(settingsSource.contains("refreshCurrentEntitlement()"))
-        XCTAssertTrue(quotaManagementSource.contains("refresh()"))
+        XCTAssertTrue(rootSource.contains("await appState.refreshCurrentEntitlement()"))
+        XCTAssertFalse(quotaManagementSource.contains("refresh()"))
+        XCTAssertFalse(quotaManagementSource.contains("isRefreshDisabled"))
     }
 
-    func testQuotaManagementKeepsAddAccountAvailableWhenEmpty() throws {
+    func testQuotaManagementViewDoesNotExposeMenuBarTargetControls() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaManagementView.swift")
-        XCTAssertTrue(source.contains("暂无额度账号"))
-        XCTAssertTrue(source.contains("addMiMoAccount()"))
+
+        XCTAssertFalse(source.contains("selectedMenuBarTarget"))
+        XCTAssertFalse(source.contains("setMenuBarTarget"))
+        XCTAssertFalse(source.contains("菜单栏"))
+        XCTAssertFalse(source.contains("Auto"))
+        XCTAssertFalse(source.contains("pin"))
+        XCTAssertFalse(source.contains("arrow.clockwise"))
+        XCTAssertFalse(source.contains("addMiMoAccount"))
+    }
+
+    func testQuotaManagementViewRendersPerAccountSummaryDetails() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaManagementView.swift")
+
+        XCTAssertTrue(source.contains("if let summary = group.summary"))
+        XCTAssertTrue(source.contains("if let summary = account.summary"))
+        XCTAssertTrue(source.contains("QuotaSummarySection(summary: summary, compact: true)"))
+        XCTAssertTrue(source.contains("if account.status != .ready"))
+        XCTAssertFalse(source.contains("Text(statusText(account.status))\n                .font(.caption2)"))
+    }
+
+    func testQuotaRuntimeDoesNotReadHiddenMenuBarTargetPreference() throws {
+        let appDataSource = try sourceText(path: "App/Sources/AiUsage/Services/AppDataService.swift")
+        let appStateSource = try sourceText(path: "App/Sources/AiUsage/Models/AppState.swift")
+
+        XCTAssertFalse(appDataSource.contains("EntitlementPreferences.menuBarTargetPreference()"))
+        XCTAssertFalse(appStateSource.contains("EntitlementPreferences.menuBarTargetPreference()"))
+        XCTAssertFalse(appStateSource.contains("setMenuBarTargetPreference"))
+        XCTAssertTrue(appDataSource.contains("targetPreference: .auto"))
+        XCTAssertTrue(appStateSource.contains("targetPreference: .auto"))
+    }
+
+    func testQuotaTabActionsLiveInBottomToolbar() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+
+        XCTAssertTrue(source.contains("if appState.selectedTabID == \"quota\""))
+        XCTAssertTrue(source.contains("ActionListRow(title: \"添加账号\""))
+        XCTAssertTrue(source.contains("ActionListRow(title: \"刷新额度\""))
+        XCTAssertTrue(source.contains("appState.prepareMiMoLoginSession()"))
+        XCTAssertTrue(source.contains("await appState.refreshCurrentEntitlement()"))
+        XCTAssertFalse(source.contains("currentProviderSupportsAccounts"))
     }
 
     private func sourceText(path: String) throws -> String {
