@@ -374,10 +374,20 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
 
         let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: testAccountID)
         let accountSummary = try! XCTUnwrap(summaries[accountKey])
+        XCTAssertEqual(accountSummary.targetID, .provider("mimo"))
+        XCTAssertEqual(accountSummary.title, "test")
+        XCTAssertEqual(accountSummary.message, "套餐额度刷新失败。")
+        XCTAssertNil(accountSummary.updatedAt)
         XCTAssertEqual(accountSummary.status, .failed)
-        XCTAssertEqual(accountSummary.primaryWindow.primaryText, "刷新失败")
+        XCTAssertEqual(accountSummary.sourceKind, .mimo)
+        XCTAssertEqual(accountSummary.provenance, .explicit)
+        XCTAssertNil(accountSummary.derivedFromTitle)
         XCTAssertEqual(accountSummary.primaryWindow.title, "")
+        XCTAssertEqual(accountSummary.primaryWindow.primaryText, "刷新失败")
         XCTAssertEqual(accountSummary.primaryWindow.secondaryText, "未知错误")
+        XCTAssertEqual(accountSummary.primaryWindow.footnoteText, "")
+        XCTAssertNil(accountSummary.primaryWindow.progress)
+        XCTAssertFalse(accountSummary.secondaryWindow.isVisible)
     }
 
     func testMiMoResolutionPersistsProfileEmailAndPlanNameForAccountRows() async throws {

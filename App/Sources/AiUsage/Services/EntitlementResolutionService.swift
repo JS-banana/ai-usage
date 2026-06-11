@@ -229,7 +229,6 @@ final class EntitlementResolutionService: @unchecked Sendable {
         account: MiMoAccount,
         error: any Error
     ) -> EntitlementSummarySnapshot {
-        let detail = compactMiMoFailureDetail(error)
         return EntitlementSummarySnapshot(
             targetID: .provider("mimo"),
             title: displayLabel(for: account, profile: nil),
@@ -244,7 +243,7 @@ final class EntitlementResolutionService: @unchecked Sendable {
                 title: "",
                 detailText: "",
                 primaryText: "刷新失败",
-                secondaryText: detail,
+                secondaryText: "未知错误",
                 footnoteText: "",
                 progress: nil
             ),
@@ -747,25 +746,6 @@ final class EntitlementResolutionService: @unchecked Sendable {
             secondaryText: detail.isEmpty ? "未知错误" : detail,
             footnote: "请检查 URL / API Key 或稍后重试"
         )
-    }
-
-    private func compactMiMoFailureDetail(_ error: any Error) -> String {
-        if let quotaError = error as? MiMoQuotaService.QuotaError {
-            switch quotaError {
-            case .serverError:
-                return "未知错误"
-            case .networkError(let networkError):
-                let detail = networkError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                return detail.isEmpty ? "未知错误" : detail
-            case .decodingError(let decodingError):
-                let detail = decodingError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                return detail.isEmpty ? "未知错误" : detail
-            case .unauthorized:
-                return "需要重新登录"
-            }
-        }
-        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-        return detail.isEmpty ? "未知错误" : detail
     }
 }
 
