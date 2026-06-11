@@ -197,24 +197,59 @@ final class EntitlementResolutionService: @unchecked Sendable {
         var accountSummaries: [String: EntitlementSummarySnapshot] = [:]
         let accountByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
         for (accountID, result) in results {
-            guard var snapshot = result.snapshot, let account = accountByID[accountID] else { continue }
-            snapshot = EntitlementSummarySnapshot(
-                targetID: snapshot.targetID,
-                title: displayLabel(for: account, profile: result.profile),
-                message: snapshot.message,
-                updatedAt: snapshot.updatedAt,
-                status: snapshot.status,
-                sourceKind: snapshot.sourceKind,
-                provenance: snapshot.provenance,
-                derivedFromTitle: snapshot.derivedFromTitle,
-                primaryWindow: accountQuotaWindow(from: snapshot.primaryWindow),
-                secondaryWindow: snapshot.secondaryWindow,
-                extraWindows: snapshot.extraWindows,
-                menuBarProgress: snapshot.menuBarProgress
-            )
+            guard let account = accountByID[accountID] else { continue }
+            let snapshot: EntitlementSummarySnapshot
+            if var successfulSnapshot = result.snapshot {
+                successfulSnapshot = EntitlementSummarySnapshot(
+                    targetID: successfulSnapshot.targetID,
+                    title: displayLabel(for: account, profile: result.profile),
+                    message: successfulSnapshot.message,
+                    updatedAt: successfulSnapshot.updatedAt,
+                    status: successfulSnapshot.status,
+                    sourceKind: successfulSnapshot.sourceKind,
+                    provenance: successfulSnapshot.provenance,
+                    derivedFromTitle: successfulSnapshot.derivedFromTitle,
+                    primaryWindow: accountQuotaWindow(from: successfulSnapshot.primaryWindow),
+                    secondaryWindow: successfulSnapshot.secondaryWindow,
+                    extraWindows: successfulSnapshot.extraWindows,
+                    menuBarProgress: successfulSnapshot.menuBarProgress
+                )
+                snapshot = successfulSnapshot
+            } else if let error = result.error {
+                snapshot = compactFailedMiMoAccountSummary(account: account, error: error)
+            } else {
+                continue
+            }
             accountSummaries[QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: accountID)] = snapshot
         }
         return accountSummaries
+    }
+
+    private func compactFailedMiMoAccountSummary(
+        account: MiMoAccount,
+        error: any Error
+    ) -> EntitlementSummarySnapshot {
+        let detail = compactMiMoFailureDetail(error)
+        return EntitlementSummarySnapshot(
+            targetID: .provider("mimo"),
+            title: displayLabel(for: account, profile: nil),
+            message: "套餐额度刷新失败。",
+            updatedAt: nil,
+            status: .failed,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: EntitlementWindowSnapshot(
+                id: "mimo-account-refresh-failed",
+                title: "",
+                detailText: "",
+                primaryText: "刷新失败",
+                secondaryText: detail,
+                footnoteText: "",
+                progress: nil
+            ),
+            secondaryWindow: .hidden(id: "mimo-account-refresh-failed-hidden")
+        )
     }
 
     private func aggregateMiMoResults(
@@ -712,6 +747,25 @@ final class EntitlementResolutionService: @unchecked Sendable {
             secondaryText: detail.isEmpty ? "未知错误" : detail,
             footnote: "请检查 URL / API Key 或稍后重试"
         )
+    }
+
+    private func compactMiMoFailureDetail(_ error: any Error) -> String {
+        if let quotaError = error as? MiMoQuotaService.QuotaError {
+            switch quotaError {
+            case .serverError:
+                return "未知错误"
+            case .networkError(let networkError):
+                let detail = networkError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                return detail.isEmpty ? "未知错误" : detail
+            case .decodingError(let decodingError):
+                let detail = decodingError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                return detail.isEmpty ? "未知错误" : detail
+            case .unauthorized:
+                return "需要重新登录"
+            }
+        }
+        let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        return detail.isEmpty ? "未知错误" : detail
     }
 }
 

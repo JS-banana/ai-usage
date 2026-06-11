@@ -357,6 +357,29 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         XCTAssertEqual(firstSummary.primaryWindow.secondaryText, "expires 2026/6/27")
     }
 
+    func testMiMoResolveSummariesReturnsCompactFailedAccountSummaryWhenTokenExistsButRefreshFails() async {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let mockHTTP = MockMiMoFlowHTTPClient()
+        mockHTTP.quotaRouteByToken["cached_tok"] = (0.0, 0.0, 500)
+
+        let service = makeService(httpClient: mockHTTP)
+
+        let summaries = await service.resolveSummaries(
+            descriptors: [mimoDescriptor()],
+            visibleProviderIDs: ["mimo"],
+            now: Date()
+        )
+
+        let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: testAccountID)
+        let accountSummary = try! XCTUnwrap(summaries[accountKey])
+        XCTAssertEqual(accountSummary.status, .failed)
+        XCTAssertEqual(accountSummary.primaryWindow.primaryText, "刷新失败")
+        XCTAssertEqual(accountSummary.primaryWindow.title, "")
+        XCTAssertEqual(accountSummary.primaryWindow.secondaryText, "未知错误")
+    }
+
     func testMiMoResolutionPersistsProfileEmailAndPlanNameForAccountRows() async throws {
         setupValidCredentials()
         setupFreshToken()
@@ -1072,10 +1095,12 @@ private final class MockMiMoFlowHTTPClient: MiMoHTTPClientProtocol, @unchecked S
            let cookie = request.value(forHTTPHeaderField: "Cookie"),
            let tokenValue = extractServiceToken(from: cookie),
            let route = quotaRouteByToken[tokenValue] {
+            let code = route.2 == 200 ? 0 : route.2
+            let message = route.2 == 200 ? "" : "server error"
             let monthUsed = Int(route.0 * 1000)
             let planUsed = Int(route.1 * 1000)
             let json = """
-            {"code":0,"data":{"monthUsage":{"percent":\(route.0),"items":[{"name":"month_total_token","used":\(monthUsed),"limit":1000,"percent":\(route.0)}]},"usage":{"percent":\(route.1),"items":[{"name":"plan_total_token","used":\(planUsed),"limit":1000,"percent":\(route.1)}]}}}
+            {"code":\(code),"message":"\(message)","data":{"monthUsage":{"percent":\(route.0),"items":[{"name":"month_total_token","used":\(monthUsed),"limit":1000,"percent":\(route.0)}]},"usage":{"percent":\(route.1),"items":[{"name":"plan_total_token","used":\(planUsed),"limit":1000,"percent":\(route.1)}]}}}
             """
             return (json.data(using: .utf8)!, HTTPURLResponse(url: request.url!, statusCode: route.2, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!)
         }
