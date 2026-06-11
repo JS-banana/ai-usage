@@ -89,6 +89,10 @@ struct QuotaManagementView: View {
         switch status {
         case .ready:
             return "ready"
+        case .stale:
+            return "stale"
+        case .failed:
+            return "refresh failed"
         case .loginRequired:
             return "login required"
         }

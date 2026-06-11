@@ -56,7 +56,7 @@ final class QuotaAccountReadModelTests: XCTestCase {
         XCTAssertEqual(group.summary, summary)
         XCTAssertEqual(group.accounts.map(\.title), ["MiMo Main", "MiMo Backup"])
         XCTAssertEqual(group.accounts.map(\.subtitle), ["first@example.com", "second@example.com"])
-        XCTAssertEqual(group.accounts.map(\.status), [.ready, .loginRequired])
+        XCTAssertEqual(group.accounts.map(\.status), [.failed, .loginRequired])
         XCTAssertNil(group.accounts.first?.summary)
     }
 
@@ -220,8 +220,115 @@ final class QuotaAccountReadModelTests: XCTestCase {
             userDefaults: defaults
         )
 
-        XCTAssertEqual(groups.first?.accounts.first?.title, "MiMo Account")
+        XCTAssertEqual(groups.first?.accounts.first?.title, "账号 1")
         XCTAssertEqual(groups.first?.accounts.first?.subtitle, "")
+    }
+
+    func testMiMoAccountRowsFallbackToOrderedNeutralLabelWhenNoReadableIdentityExists() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelNeutralFallbackTests")
+        let firstID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let secondID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let now = Date(timeIntervalSince1970: 1_718_000_000)
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: firstID,
+                credentials: MiMoCredentials(username: "123456789", passwordMD5: ""),
+                displayName: "MiMo 123456789"
+            ),
+            MiMoAccount(
+                id: secondID,
+                credentials: MiMoCredentials(username: "987654321", passwordMD5: ""),
+                displayName: "MiMo 987654321"
+            )
+        ], userDefaults: defaults)
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults,
+            now: now
+        )
+
+        let accounts = try XCTUnwrap(groups.first?.accounts)
+        XCTAssertEqual(accounts.map(\.title), ["账号 1", "账号 2"])
+        XCTAssertEqual(accounts.map(\.subtitle), ["", ""])
+    }
+
+    func testMiMoAccountRowsExposeFooterStatusTextForReadyStaleAndLoginRequired() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelFooterStatusTests")
+        let readyID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let staleID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+        let loginRequiredID = UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!
+        let now = Date(timeIntervalSince1970: 1_718_000_000)
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: readyID,
+                credentials: MiMoCredentials(username: "ready@example.com", passwordMD5: ""),
+                displayName: "Ready Account"
+            ),
+            MiMoAccount(
+                id: staleID,
+                credentials: MiMoCredentials(username: "stale@example.com", passwordMD5: ""),
+                displayName: "Stale Account"
+            ),
+            MiMoAccount(
+                id: loginRequiredID,
+                credentials: MiMoCredentials(username: "login@example.com", passwordMD5: ""),
+                displayName: "Login Required Account"
+            )
+        ], userDefaults: defaults)
+        EntitlementPreferences.setMiMoServiceToken(
+            MiMoServiceToken(serviceToken: "ready-token", userId: "1", slh: "s", ph: "p", acquiredAt: now),
+            forAccount: readyID,
+            userDefaults: defaults
+        )
+        EntitlementPreferences.setMiMoServiceToken(
+            MiMoServiceToken(serviceToken: "stale-token", userId: "2", slh: "s", ph: "p", acquiredAt: now),
+            forAccount: staleID,
+            userDefaults: defaults
+        )
+
+        let readySummary = EntitlementSummarySnapshot(
+            targetID: .provider("mimo"),
+            title: "Ready Account",
+            message: "",
+            updatedAt: now.addingTimeInterval(-120),
+            status: .ready,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: .init(id: "ready-primary", title: "账号额度", primaryText: "10% used", secondaryText: "", footnoteText: "", progress: 0.1),
+            secondaryWindow: .hidden(id: "ready-secondary"),
+            menuBarProgress: 0.1
+        )
+        let staleSummary = EntitlementSummarySnapshot(
+            targetID: .provider("mimo"),
+            title: "Stale Account",
+            message: "",
+            updatedAt: now.addingTimeInterval(-300),
+            status: .stale,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: .init(id: "stale-primary", title: "账号额度", primaryText: "40% used", secondaryText: "", footnoteText: "", progress: 0.4),
+            secondaryWindow: .hidden(id: "stale-secondary"),
+            menuBarProgress: 0.4
+        )
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [
+                QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: readyID): readySummary,
+                QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: staleID): staleSummary
+            ],
+            userDefaults: defaults,
+            now: now
+        )
+
+        let accounts = try XCTUnwrap(groups.first?.accounts)
+        XCTAssertEqual(accounts.map(\.footerStatusText), [
+            "updated 2 min. ago",
+            "last success 5 min. ago",
+            "login required"
+        ])
     }
 
     func testMiMoAccountRowsUseNonSecretMirrorsForDisplayState() throws {
@@ -241,7 +348,7 @@ final class QuotaAccountReadModelTests: XCTestCase {
         let account = try XCTUnwrap(groups.first?.accounts.first)
         XCTAssertEqual(account.title, "MiMo Mirror")
         XCTAssertEqual(account.subtitle, "mirrored@example.com")
-        XCTAssertEqual(account.status, .ready)
+        XCTAssertEqual(account.status, .failed)
     }
 
     func testMiMoAccountRowsPreferProfileEmailAndPlanNameOverUserID() throws {
@@ -323,7 +430,7 @@ final class QuotaAccountReadModelTests: XCTestCase {
         let account = try XCTUnwrap(groups.first?.accounts.first)
         XCTAssertEqual(account.title, "Legacy MiMo")
         XCTAssertEqual(account.subtitle, "legacy@example.com")
-        XCTAssertEqual(account.status, .ready)
+        XCTAssertEqual(account.status, .failed)
     }
 
     private func makeDefaults(_ name: String) -> UserDefaults {
