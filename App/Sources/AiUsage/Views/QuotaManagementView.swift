@@ -77,24 +77,11 @@ struct QuotaManagementView: View {
                     .background(Color.primary.opacity(0.06), in: Capsule())
             }
             if account.status == .loginRequired {
-                Text(statusText(account.status))
+                Text("login required")
                     .font(.caption2)
                     .foregroundStyle(Color.orange)
             }
         }
         .padding(.vertical, 7)
-    }
-
-    private func statusText(_ status: QuotaAccountStatus) -> String {
-        switch status {
-        case .ready:
-            return "ready"
-        case .stale:
-            return "stale"
-        case .failed:
-            return "refresh failed"
-        case .loginRequired:
-            return "login required"
-        }
     }
 }

@@ -60,6 +60,29 @@ final class QuotaAccountReadModelTests: XCTestCase {
         XCTAssertNil(group.accounts.first?.summary)
     }
 
+    func testMiMoGroupsStayEmptyWhenNoAccountsExistEvenIfVendorSummaryExists() {
+        let defaults = makeDefaults("QuotaAccountReadModelNoAccountsTests")
+        let providerSummary = EntitlementSummarySnapshot.placeholder(
+            targetID: .provider("mimo"),
+            title: "MiMo",
+            message: "",
+            status: .ready,
+            sourceKind: .mimo,
+            primaryTitle: "套餐总额度",
+            secondaryTitle: "",
+            primaryText: "20% used",
+            secondaryText: "",
+            footnote: ""
+        )
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: ["mimo": providerSummary],
+            userDefaults: defaults
+        )
+
+        XCTAssertTrue(groups.isEmpty)
+    }
+
     func testMiMoAccountRowsAttachPerAccountSummaries() {
         let defaults = makeDefaults("QuotaAccountReadModelAccountSummaryTests")
         let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
@@ -349,6 +372,144 @@ final class QuotaAccountReadModelTests: XCTestCase {
             "last success 5 min. ago",
             "login required"
         ])
+    }
+
+    func testMiMoAccountRowsMapFailedSummaryToFailedWhenTokenExists() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelFailedWithTokenTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: accountID,
+                credentials: MiMoCredentials(username: "failed@example.com", passwordMD5: ""),
+                displayName: "Failed Account"
+            )
+        ], userDefaults: defaults)
+        EntitlementPreferences.setMiMoServiceToken(
+            MiMoServiceToken(serviceToken: "token", userId: "1", slh: "s", ph: "p", acquiredAt: Date()),
+            forAccount: accountID,
+            userDefaults: defaults
+        )
+        let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: accountID)
+        let summary = EntitlementSummarySnapshot.placeholder(
+            targetID: .provider("mimo"),
+            title: "Failed Account",
+            message: "",
+            status: .failed,
+            sourceKind: .mimo,
+            primaryTitle: "账号额度",
+            secondaryTitle: "",
+            primaryText: "",
+            secondaryText: "",
+            footnote: ""
+        )
+
+        let account = try XCTUnwrap(QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [accountKey: summary],
+            userDefaults: defaults
+        ).first?.accounts.first)
+
+        XCTAssertEqual(account.status, .failed)
+        XCTAssertEqual(account.footerStatusText, "refresh failed")
+    }
+
+    func testMiMoAccountRowsMapFailedSummaryToLoginRequiredWithoutToken() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelFailedWithoutTokenTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: accountID,
+                credentials: MiMoCredentials(username: "failed@example.com", passwordMD5: ""),
+                displayName: "Failed Account"
+            )
+        ], userDefaults: defaults)
+        let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: accountID)
+        let summary = EntitlementSummarySnapshot.placeholder(
+            targetID: .provider("mimo"),
+            title: "Failed Account",
+            message: "",
+            status: .failed,
+            sourceKind: .mimo,
+            primaryTitle: "账号额度",
+            secondaryTitle: "",
+            primaryText: "",
+            secondaryText: "",
+            footnote: ""
+        )
+
+        let account = try XCTUnwrap(QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [accountKey: summary],
+            userDefaults: defaults
+        ).first?.accounts.first)
+
+        XCTAssertEqual(account.status, .loginRequired)
+        XCTAssertEqual(account.footerStatusText, "login required")
+    }
+
+    func testMiMoAccountRowsMapNonReadySummaryStatusesBasedOnTokenPresence() throws {
+        let statuses: [EntitlementSummaryStatus] = [.unconfigured, .configuredNonlive, .unavailable]
+
+        for status in statuses {
+            let withTokenDefaults = makeDefaults("QuotaAccountReadModel\(status.rawValue)WithTokenTests")
+            let withTokenAccountID = UUID()
+            EntitlementPreferences.setMiMoAccounts([
+                MiMoAccount(
+                    id: withTokenAccountID,
+                    credentials: MiMoCredentials(username: "\(status.rawValue)-with-token@example.com", passwordMD5: ""),
+                    displayName: "With Token"
+                )
+            ], userDefaults: withTokenDefaults)
+            EntitlementPreferences.setMiMoServiceToken(
+                MiMoServiceToken(serviceToken: "token", userId: "1", slh: "s", ph: "p", acquiredAt: Date()),
+                forAccount: withTokenAccountID,
+                userDefaults: withTokenDefaults
+            )
+            let withTokenKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: withTokenAccountID)
+            let withTokenSummary = EntitlementSummarySnapshot.placeholder(
+                targetID: .provider("mimo"),
+                title: "With Token",
+                message: "",
+                status: status,
+                sourceKind: .mimo,
+                primaryTitle: "账号额度",
+                secondaryTitle: "",
+                primaryText: "",
+                secondaryText: "",
+                footnote: ""
+            )
+            let withTokenAccount = try XCTUnwrap(QuotaAccountReadModel.makeGroups(
+                entitlementsByTarget: [withTokenKey: withTokenSummary],
+                userDefaults: withTokenDefaults
+            ).first?.accounts.first)
+            XCTAssertEqual(withTokenAccount.status, .failed, "Expected .failed for \(status.rawValue) with token")
+
+            let withoutTokenDefaults = makeDefaults("QuotaAccountReadModel\(status.rawValue)WithoutTokenTests")
+            let withoutTokenAccountID = UUID()
+            EntitlementPreferences.setMiMoAccounts([
+                MiMoAccount(
+                    id: withoutTokenAccountID,
+                    credentials: MiMoCredentials(username: "\(status.rawValue)-without-token@example.com", passwordMD5: ""),
+                    displayName: "Without Token"
+                )
+            ], userDefaults: withoutTokenDefaults)
+            let withoutTokenKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: withoutTokenAccountID)
+            let withoutTokenSummary = EntitlementSummarySnapshot.placeholder(
+                targetID: .provider("mimo"),
+                title: "Without Token",
+                message: "",
+                status: status,
+                sourceKind: .mimo,
+                primaryTitle: "账号额度",
+                secondaryTitle: "",
+                primaryText: "",
+                secondaryText: "",
+                footnote: ""
+            )
+            let withoutTokenAccount = try XCTUnwrap(QuotaAccountReadModel.makeGroups(
+                entitlementsByTarget: [withoutTokenKey: withoutTokenSummary],
+                userDefaults: withoutTokenDefaults
+            ).first?.accounts.first)
+            XCTAssertEqual(withoutTokenAccount.status, .loginRequired, "Expected .loginRequired for \(status.rawValue) without token")
+        }
     }
 
     func testMiMoAccountRowsUseNonSecretMirrorsForDisplayState() throws {

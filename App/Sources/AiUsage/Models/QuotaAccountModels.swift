@@ -61,7 +61,7 @@ enum QuotaAccountReadModel {
     ) -> [QuotaVendorGroupSnapshot] {
         let mimoAccounts = EntitlementPreferences.mimoAccountDisplayMirror(userDefaults: userDefaults)
         let accountsWithToken = EntitlementPreferences.mimoAccountIDsWithStoredToken(userDefaults: userDefaults)
-        guard mimoAccounts.isEmpty == false || entitlementsByTarget["mimo"] != nil else {
+        guard mimoAccounts.isEmpty == false else {
             return []
         }
         let vendorSummary = mimoAccounts.count > 1

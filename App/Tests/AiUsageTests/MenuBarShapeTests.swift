@@ -267,14 +267,19 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertFalse(source.contains("addMiMoAccount"))
     }
 
-    func testQuotaManagementViewRendersPerAccountSummaryDetails() throws {
+    func testQuotaManagementViewRendersPerAccountSummariesButOnlyLoginRequiredRowWarning() throws {
         let source = try sourceText(path: "App/Sources/AiUsage/Views/QuotaManagementView.swift")
 
         XCTAssertTrue(source.contains("if let summary = group.summary"))
         XCTAssertTrue(source.contains("if let summary = account.summary"))
         XCTAssertTrue(source.contains("QuotaSummarySection(summary: summary, compact: true)"))
-        XCTAssertTrue(source.contains("if account.status != .ready"))
-        XCTAssertFalse(source.contains("Text(statusText(account.status))\n                .font(.caption2)"))
+        XCTAssertTrue(source.contains("if account.status == .loginRequired"))
+        XCTAssertTrue(source.contains("Text(\"login required\")"))
+        XCTAssertFalse(source.contains("if account.status != .ready"))
+        XCTAssertFalse(source.contains("statusText("))
+        XCTAssertFalse(source.contains("refresh failed"))
+        XCTAssertFalse(source.contains(".stale"))
+        XCTAssertFalse(source.contains(".failed"))
     }
 
     func testQuotaRuntimeDoesNotReadHiddenMenuBarTargetPreference() throws {
