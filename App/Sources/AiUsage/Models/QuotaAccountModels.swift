@@ -94,14 +94,18 @@ enum QuotaAccountReadModel {
     }
 
     private static func title(for account: MiMoAccount, index: Int) -> String {
-        for value in [
-            account.email,
-            account.platformEmail,
-            account.phone,
-            account.displayName,
-            account.credentials.username
-        ] {
+        for value in [account.email, account.platformEmail] {
             let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty == false, isTechnicalMiMoID(trimmed) == false {
+                return trimmed
+            }
+        }
+        let phone = (account.phone ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if phone.isEmpty == false {
+            return phone
+        }
+        for value in [account.displayName, account.credentials.username] {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty == false, isTechnicalMiMoID(trimmed) == false {
                 return trimmed
             }

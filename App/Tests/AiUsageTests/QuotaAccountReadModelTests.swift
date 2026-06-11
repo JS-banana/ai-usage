@@ -253,6 +253,26 @@ final class QuotaAccountReadModelTests: XCTestCase {
         XCTAssertEqual(accounts.map(\.subtitle), ["", ""])
     }
 
+    func testMiMoAccountRowsUseNumericPhoneAsReadableTitle() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelNumericPhoneTitleTests")
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                credentials: MiMoCredentials(username: "897298966", passwordMD5: ""),
+                displayName: "MiMo 897298966",
+                phone: "13800138000"
+            )
+        ], userDefaults: defaults)
+
+        let groups = QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [:],
+            userDefaults: defaults
+        )
+
+        let account = try XCTUnwrap(groups.first?.accounts.first)
+        XCTAssertEqual(account.title, "13800138000")
+        XCTAssertEqual(account.subtitle, "")
+    }
+
     func testMiMoAccountRowsExposeFooterStatusTextForReadyStaleAndLoginRequired() throws {
         let defaults = makeDefaults("QuotaAccountReadModelFooterStatusTests")
         let readyID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
