@@ -76,7 +76,7 @@ struct QuotaManagementView: View {
                     .padding(.vertical, 3)
                     .background(Color.primary.opacity(0.06), in: Capsule())
             }
-            if account.status != .ready {
+            if account.status == .loginRequired {
                 Text(statusText(account.status))
                     .font(.caption2)
                     .foregroundStyle(Color.orange)
