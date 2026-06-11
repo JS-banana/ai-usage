@@ -278,6 +278,7 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertTrue(source.contains("if account.planName.isEmpty == false"))
         XCTAssertTrue(source.contains("accountProgressTrack(progress:"))
         XCTAssertTrue(source.contains("if let summary = group.summary"))
+        XCTAssertFalse(source.contains("if let summary = group.summary, summary.status != .unconfigured"))
         XCTAssertFalse(source.contains("quotaAccountRow(account)"))
         XCTAssertFalse(source.contains("Text(\"账号额度\")"))
         XCTAssertFalse(source.contains("Text(\"login required\")"))

@@ -31,7 +31,7 @@ struct QuotaManagementView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let summary = group.summary, summary.status != .unconfigured {
+            if let summary = group.summary {
                 QuotaSummarySection(summary: summary, compact: true)
             }
 
