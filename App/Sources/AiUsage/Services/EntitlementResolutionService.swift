@@ -417,6 +417,17 @@ final class EntitlementResolutionService: @unchecked Sendable {
         return "MiMo Account"
     }
 
+    private func cachedDisplayLabel(for account: MiMoAccount, cachedAccountLabel: String?) -> String {
+        let cachedLabel = (cachedAccountLabel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if cachedLabel.isEmpty == false,
+           isTechnicalMiMoID(cachedLabel) == false,
+           cachedLabel.caseInsensitiveCompare("MiMo") != .orderedSame,
+           cachedLabel.caseInsensitiveCompare("MiMo Account") != .orderedSame {
+            return cachedLabel
+        }
+        return displayLabel(for: account, profile: nil)
+    }
+
     private func isTechnicalMiMoID(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.range(of: #"^\d+$"#, options: .regularExpression) != nil {
@@ -479,7 +490,7 @@ final class EntitlementResolutionService: @unchecked Sendable {
             ), let summary = cachedMiMoSummary(
                 cached,
                 descriptor: descriptor,
-                title: displayLabel(for: account, profile: nil),
+                title: cachedDisplayLabel(for: account, cachedAccountLabel: cached.account.accountLabel),
                 windowTitle: "账号额度",
                 includeUsageDetail: true
             ) {
@@ -520,7 +531,7 @@ final class EntitlementResolutionService: @unchecked Sendable {
             ), let summary = cachedMiMoSummary(
                 cached,
                 descriptor: descriptor,
-                title: displayLabel(for: account, profile: nil),
+                title: cachedDisplayLabel(for: account, cachedAccountLabel: cached.account.accountLabel),
                 windowTitle: "账号额度",
                 includeUsageDetail: true
             ) else {

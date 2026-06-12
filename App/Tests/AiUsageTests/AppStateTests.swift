@@ -5,6 +5,13 @@ import Query
 
 @MainActor
 final class AppStateTests: XCTestCase {
+    func testRefreshPolicyDefaultsToTenMinuteUsageAndThirtyMinuteEntitlementTTL() {
+        let policy = RefreshPolicy()
+        XCTAssertEqual(policy.usageTTL, 600)
+        XCTAssertEqual(policy.entitlementTTL, 1800)
+        XCTAssertEqual(policy.schedulerTick, 60)
+    }
+
     func testBootstrapFailureSurfacesStatusInsteadOfCrashing() async {
         let state = AppState(bootstrapError: BootstrapTestError.failed)
 
@@ -103,6 +110,29 @@ final class AppStateTests: XCTestCase {
                 menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
             ),
             refreshPolicy: RefreshPolicy(usageTTL: 600, entitlementTTL: 1800)
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        state.lastUsageRefresh = now.addingTimeInterval(-601)
+        state.lastEntitlementRefresh = now.addingTimeInterval(-120)
+
+        await state.refreshIfStale(now: now)
+
+        XCTAssertEqual(importRunner.runCount, 1)
+        XCTAssertEqual(entitlementResolver.resolveCallCount, 0)
+        XCTAssertNotNil(state.lastUsageRefresh)
+        XCTAssertEqual(state.lastEntitlementRefresh, now.addingTimeInterval(-120))
+    }
+
+    func testRefreshIfStaleUsesDefaultRefreshPolicyValues() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = CountingEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
         )
         let now = Date(timeIntervalSince1970: 10_000)
         state.lastUsageRefresh = now.addingTimeInterval(-601)

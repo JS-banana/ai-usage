@@ -247,6 +247,59 @@ final class EntitlementResolutionMiMoTests: XCTestCase {
         XCTAssertTrue(accountSummary.primaryWindow.secondaryText.hasPrefix("expires "))
     }
 
+    func testMiMoStartupFallbackUsesCachedAccountLabelForPerAccountSummaryTitle() async throws {
+        setupValidCredentials()
+        setupFreshToken()
+
+        let capturedAt = Date(timeIntervalSince1970: 1_000)
+        let snapshotStore = QuotaSnapshotStoreStub(
+            snapshot: ProviderQuotaSnapshot(
+                account: ProviderAccount(
+                    id: testAccountID.uuidString,
+                    providerID: "mimo",
+                    accountLabel: "ooo***k@gmail.com",
+                    backendLabel: "xiaomi",
+                    createdAt: capturedAt,
+                    updatedAt: capturedAt
+                ),
+                snapshot: QuotaSnapshot(
+                    id: "cached-snapshot",
+                    accountID: testAccountID.uuidString,
+                    refreshRunID: nil,
+                    capturedAt: capturedAt,
+                    freshnessDate: capturedAt,
+                    isStale: false
+                ),
+                windows: [
+                    AllowanceWindow(
+                        id: "cached-window",
+                        snapshotID: "cached-snapshot",
+                        kind: .monthly,
+                        used: 14,
+                        limit: 100,
+                        remaining: 86,
+                        resetsAt: Date(timeIntervalSince1970: 2_000)
+                    )
+                ]
+            )
+        )
+        let service = makeService(
+            httpClient: MockMiMoFlowHTTPClient(),
+            quotaSnapshotStore: snapshotStore
+        )
+
+        let summaries = await service.resolveSummaries(
+            descriptors: [mimoDescriptor()],
+            visibleProviderIDs: Set(["mimo"]),
+            trigger: .startup,
+            now: Date()
+        )
+
+        let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: testAccountID)
+        let accountSummary = try XCTUnwrap(summaries[accountKey])
+        XCTAssertEqual(accountSummary.title, "ooo***k@gmail.com")
+    }
+
     func testMiMoReturnsFailedWhenNoStoredTokenExists() async {
         setupValidCredentials()
 

@@ -276,6 +276,47 @@ final class QuotaAccountReadModelTests: XCTestCase {
         XCTAssertEqual(accounts.map(\.subtitle), ["", ""])
     }
 
+    func testMiMoAccountRowsUseReadableSummaryTitleBeforeFallingBackToNeutralLabel() throws {
+        let defaults = makeDefaults("QuotaAccountReadModelReadableSummaryTitleTests")
+        let accountID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        EntitlementPreferences.setMiMoAccounts([
+            MiMoAccount(
+                id: accountID,
+                credentials: MiMoCredentials(username: "123456789", passwordMD5: ""),
+                displayName: "MiMo 123456789"
+            )
+        ], userDefaults: defaults)
+
+        let accountKey = QuotaMenuBarTargetKey.account(providerID: "mimo", accountID: accountID)
+        let summary = EntitlementSummarySnapshot(
+            targetID: .provider("mimo"),
+            title: "ooo***k@gmail.com",
+            message: "",
+            updatedAt: Date(),
+            status: .stale,
+            sourceKind: .mimo,
+            provenance: .explicit,
+            derivedFromTitle: nil,
+            primaryWindow: .init(
+                id: "mimo-account-primary",
+                title: "账号额度",
+                primaryText: "14% used",
+                secondaryText: "",
+                footnoteText: "",
+                progress: 0.14
+            ),
+            secondaryWindow: .hidden(id: "mimo-account-secondary"),
+            menuBarProgress: 0.14
+        )
+
+        let account = try XCTUnwrap(QuotaAccountReadModel.makeGroups(
+            entitlementsByTarget: [accountKey: summary],
+            userDefaults: defaults
+        ).first?.accounts.first)
+
+        XCTAssertEqual(account.title, "ooo***k@gmail.com")
+    }
+
     func testMiMoAccountRowsUseNumericPhoneAsReadableTitle() throws {
         let defaults = makeDefaults("QuotaAccountReadModelNumericPhoneTitleTests")
         EntitlementPreferences.setMiMoAccounts([

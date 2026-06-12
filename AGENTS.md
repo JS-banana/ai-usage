@@ -21,7 +21,7 @@ Domain（零依赖）
 ├── ProviderKit（Provider 描述符、能力定义）
 ├── ParserCore（各平台 JSONL/JSON 日志解析器）
 ├── Ingestion（数据导入协调、来源发现、去重）
-├── Persistence（GRDB/SQLite，schema v3）
+├── Persistence（GRDB/SQLite，已实现 v1-v3 migration；当前默认 schema 配置仍是 v1）
 └── Query（Dashboard、趋势、来源健康度查询）
 App (ExecutableTarget) — 依赖以上所有模块
 ```
@@ -42,7 +42,7 @@ App (ExecutableTarget) — 依赖以上所有模块
 
 1. **第三方 API（LaifuyouQuotaService）**：通过 endpointURL + apiKey 调用 `/quota-summary`，返回 5h/7d 额度窗口。支持 sub2api 等聚合平台。
 2. **官方 CLI 探测（OfficialEntitlementProbe）**：shell 调用 `codex -s read-only` 或 `claude -p '/usage'`，解析 ANSI 输出中的百分比。当前仅 Claude Code 和 Codex。
-3. **MiMo 官方网页登录（MiMoWebLoginView + MiMoQuotaService）**：App 内打开小米/MiMo 官方页面，用户在官方页面完成账号密码、验证码或风控校验；App 自动提取登录后的 `serviceToken` Cookie，存入 Keychain，再调用 `/api/v1/tokenPlan/usage` 返回套餐总 token 用量，用 `/api/v1/tokenPlan/detail` 补充套餐名称和到期时间，并用 `/api/v1/userProfile` 补充账号展示邮箱/手机号。MiMo 没有 5h/week 限额，UI 将 `plan_total_token` 与 `compensation_total_token` 合并为 token-plan 口径；单账号时 quota tab 只显示该账号自己的额度卡，多账号时才显示上方“套餐总额度”聚合卡。账号标题优先使用 `/api/v1/userProfile` 的邮箱，套餐类型来自 `/api/v1/tokenPlan/detail.planName`。缓存兜底必须明确标记为“显示上次成功数据”，不要把缓存时间伪装成当前刷新时间。账号行显示邮箱优先的可读身份和套餐名称，不展示技术性 userId。账户余额接口已调研但当前暂停，不请求 `/api/v1/balance`，也不展示余额卡。菜单栏 icon 始终按剩余额度展示：MiMo 使用合并 token-plan 剩余比例的单个 token tank，coding-plan provider 使用 5h/session 与 7d/week 双柱。后台刷新只复用已存 token，401 或缺 token 时提示重新登录，不用账号密码静默重试；网络失败时优先保留上次成功额度 snapshot 并标记 stale。
+3. **MiMo 官方网页登录（MiMoWebLoginView + MiMoQuotaService）**：App 内打开小米/MiMo 官方页面，用户在官方页面完成账号密码、验证码或风控校验；App 自动提取登录后的 `serviceToken` Cookie，存入 Keychain，再调用 `/api/v1/tokenPlan/usage` 返回套餐总 token 用量，用 `/api/v1/tokenPlan/detail` 补充套餐名称和到期时间，并用 `/api/v1/userProfile` 补充账号展示邮箱/手机号。MiMo 没有 5h/week 限额，UI 将 `plan_total_token` 与 `compensation_total_token` 合并为 token-plan 口径；单账号时 quota tab 只显示该账号自己的额度卡，多账号时才显示上方“套餐总额度”聚合卡。MiMo 账号区按账号卡顺序直接展示，不额外显示 `MiMo Account` 或 `账号额度` 文案；账号卡内部展示邮箱优先的身份、套餐类型、额度明细，以及右下角的更新时间/登录状态。账号标题优先使用 `/api/v1/userProfile` 的邮箱，套餐类型来自 `/api/v1/tokenPlan/detail.planName`。缓存兜底必须明确标记为“显示上次成功数据”，不要把缓存时间伪装成当前刷新时间。账号卡显示邮箱优先的可读身份和套餐名称，不展示技术性 userId。账户余额接口已调研但当前暂停，不请求 `/api/v1/balance`，也不展示余额卡。菜单栏 icon 始终按剩余额度展示：MiMo 使用合并 token-plan 剩余比例的单个 token tank，coding-plan provider 使用 5h/session 与 7d/week 双柱。后台刷新只复用已存 token，401 或缺 token 时提示重新登录，不用账号密码静默重试；网络失败时优先保留上次成功额度 snapshot 并标记 stale。
 
 菜单栏额度来源：当前不在“额度”tab 暴露手动固定目标；菜单栏摘要使用内部自动选择逻辑，从可用额度中选择剩余比例最低的目标。历史固定目标偏好不得影响当前 quota tab 的展示和刷新链路。
 
@@ -52,12 +52,13 @@ App (ExecutableTarget) — 依赖以上所有模块
 - Entitlement 默认 TTL：30 分钟，触发远程额度查询或 CLI 探测。
 - 打开菜单和 app active 不做无条件刷新；后台 scheduler 只执行 `refreshIfStale`。
 - 手动刷新全部数据可以调用组合入口；额度 tab 底部操作栏里的“刷新额度”只刷新 entitlement，不跑本地 usage import。
+- MiMo 当前产品路径通过官方网页登录保存登录态；401 或缺 token 时提示重新登录，不使用已存账号密码静默重试。
 - 设置窗口只控制本机 agent 显隐；账号和额度管理放在主弹窗的“额度”tab。
 - 初始化尚未加载 quota 时不显示“套餐额度暂不可用”大块占位；只有已完成刷新后缺登录态、401 或失败时才给紧凑反馈。
 
 ## 数据库
 
-GRDB.swift (SQLite)，当前 schema v3：
+GRDB.swift (SQLite)，已实现 v1-v3 migration，但当前 `SchemaVersion` / `PersistenceConfiguration` 默认值仍是 v1：
 - v1：sources、source_files、import_runs、usage_events、sessions、parser_diagnostics、daily_buckets
 - v2：添加 request_count、request_semantic、request_confidence 字段
 - v3：provider_accounts、account_refresh_runs、account_snapshots、allowance_windows、account_diagnostics
@@ -97,5 +98,5 @@ swift test --filter ParserCoreTests
 
 - **及时更新本文件**：项目架构、provider 支持状态、schema 版本等发生变化时同步更新
 - **新增 Provider**：实现 `UsageParser` 协议 → 注册到 `StaticSourceRegistry` → 在 `ProviderBrandCatalog` 添加品牌
-- **数据库 schema 变更**：在 `PersistenceMigrator` 注册新 migration，更新 `SchemaVersion`
+- **数据库 schema 变更**：在 `PersistenceMigrator` 注册新 migration，并同步更新 `SchemaVersion`、`PersistenceConfiguration` 默认值和本文件中的 schema 现状描述
 - **版本号**：当前在 `build.sh` 的 `VERSION` 变量中管理，CI 自动同步到 git tag

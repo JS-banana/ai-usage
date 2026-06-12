@@ -9,7 +9,16 @@ struct RootView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @State private var measuredMenuBarContentHeight: CGFloat = 0
     private let primaryContentMinHeight: CGFloat = 250
+
+    private struct MenuBarContentHeightPreferenceKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+            value = nextValue()
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -19,7 +28,25 @@ struct RootView: View {
             statusRow
         }
         .padding(10)
-        .frame(minWidth: 380, idealWidth: 400, maxWidth: 430, alignment: .topLeading)
+        .frame(
+            minWidth: 380,
+            idealWidth: 400,
+            maxWidth: 430,
+            alignment: .topLeading
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: MenuBarContentHeightPreferenceKey.self,
+                    value: geometry.size.height
+                )
+            }
+        )
+        .onPreferenceChange(MenuBarContentHeightPreferenceKey.self) { height in
+            measuredMenuBarContentHeight = height
+        }
+        .background(MenuBarWindowContentSizer(targetHeight: measuredMenuBarContentHeight))
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -46,7 +73,10 @@ struct RootView: View {
     @ViewBuilder
     private var primaryContent: some View {
         if appState.selectedTabID == "quota" {
-            quotaContent
+            QuotaManagementView(
+                groups: appState.quotaGroups
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         } else {
             summaryContent
         }
@@ -63,12 +93,6 @@ struct RootView: View {
                 SectionEmptyState(title: "暂无来源数据", message: "在下方添加或启用账号来源后，这里会显示统计。")
             }
         }
-    }
-
-    private var quotaContent: some View {
-        QuotaManagementView(
-            groups: appState.quotaGroups
-        )
     }
 
     private var overviewSummary: some View {
@@ -154,6 +178,7 @@ struct RootView: View {
         Text(appState.statusMessage)
             .font(.caption)
             .foregroundStyle(statusColor)
+            .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -258,6 +283,34 @@ private struct ProviderTabButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(tab.name))
+    }
+}
+
+private struct MenuBarWindowContentSizer: NSViewRepresentable {
+    let targetHeight: CGFloat
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            updateWindowSize(for: view, targetHeight: targetHeight)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            updateWindowSize(for: nsView, targetHeight: targetHeight)
+        }
+    }
+
+    private func updateWindowSize(for view: NSView, targetHeight: CGFloat) {
+        guard let window = view.window, targetHeight > 0 else { return }
+
+        let currentSize = window.contentLayoutRect.size
+        let nextSize = NSSize(width: currentSize.width, height: targetHeight)
+        if abs(currentSize.height - nextSize.height) > 0.5 {
+            window.setContentSize(nextSize)
+        }
     }
 }
 

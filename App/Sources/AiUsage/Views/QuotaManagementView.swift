@@ -21,6 +21,7 @@ struct QuotaManagementView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func quotaVendorGroup(_ group: QuotaVendorGroupSnapshot) -> some View {

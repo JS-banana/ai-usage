@@ -307,6 +307,43 @@ final class MenuBarShapeTests: XCTestCase {
         XCTAssertFalse(source.contains("currentProviderSupportsAccounts"))
     }
 
+    func testRootViewNoLongerHardcodesQuotaTabAsAlwaysScrollView() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+
+        XCTAssertFalse(source.contains("if appState.selectedTabID == \"quota\" {\n            ScrollView {"))
+        XCTAssertFalse(source.contains(".scrollIndicators(.visible)"))
+    }
+
+    func testRootViewSourceDoesNotUseManualPopupSizing() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+
+        XCTAssertTrue(source.contains("primaryContent\n                .frame(maxWidth: .infinity, minHeight: primaryContentMinHeight, alignment: .topLeading)"))
+        XCTAssertFalse(source.contains("RootViewPopupSizing"))
+        XCTAssertFalse(source.contains("measuredPrimaryContentHeight"))
+        XCTAssertFalse(source.contains("measuredPrimaryContent("))
+        XCTAssertFalse(source.contains("popupSizing"))
+        XCTAssertFalse(source.contains("ScrollView {"))
+    }
+
+    func testRootViewSourceResizesMenuBarWindowToFittingContentHeight() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+
+        XCTAssertTrue(source.contains("@State private var measuredMenuBarContentHeight: CGFloat = 0"))
+        XCTAssertTrue(source.contains(".fixedSize(horizontal: false, vertical: true)"))
+        XCTAssertTrue(source.contains(".onPreferenceChange(MenuBarContentHeightPreferenceKey.self)"))
+        XCTAssertTrue(source.contains("MenuBarWindowContentSizer"))
+        XCTAssertTrue(source.contains("targetHeight: measuredMenuBarContentHeight"))
+        XCTAssertTrue(source.contains("window.setContentSize("))
+        XCTAssertFalse(source.contains("hostingView.fittingSize.height"))
+    }
+
+    func testRootViewStatusRowStaysSingleLineForStableShellHeight() throws {
+        let source = try sourceText(path: "App/Sources/AiUsage/Views/RootView.swift")
+
+        XCTAssertTrue(source.contains("private var statusRow: some View"))
+        XCTAssertTrue(source.contains(".lineLimit(1)"))
+    }
+
     private func sourceText(path: String) throws -> String {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let repoRoot = testFileURL

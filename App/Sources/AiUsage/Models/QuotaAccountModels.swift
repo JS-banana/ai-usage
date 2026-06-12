@@ -78,7 +78,7 @@ enum QuotaAccountReadModel {
                     let summary = entitlementsByTarget[accountTargetKey]
                     let hasToken = accountsWithToken.contains(account.id)
                     let status = status(for: summary, hasToken: hasToken)
-                    let title = title(for: account, index: index)
+                    let title = title(for: account, summary: summary, index: index)
                     return QuotaAccountRowSnapshot(
                         id: accountTargetKey,
                         title: title,
@@ -93,7 +93,11 @@ enum QuotaAccountReadModel {
         ]
     }
 
-    private static func title(for account: MiMoAccount, index: Int) -> String {
+    private static func title(
+        for account: MiMoAccount,
+        summary: EntitlementSummarySnapshot?,
+        index: Int
+    ) -> String {
         for value in [account.email, account.platformEmail] {
             let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty == false, isTechnicalMiMoID(trimmed) == false {
@@ -104,9 +108,12 @@ enum QuotaAccountReadModel {
         if phone.isEmpty == false {
             return phone
         }
-        for value in [account.displayName, account.credentials.username] {
-            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty == false, isTechnicalMiMoID(trimmed) == false {
+        for value in [account.displayName, account.credentials.username, summary?.title] {
+            let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty == false,
+               isTechnicalMiMoID(trimmed) == false,
+               trimmed.caseInsensitiveCompare("MiMo") != ComparisonResult.orderedSame,
+               trimmed.caseInsensitiveCompare("MiMo Account") != ComparisonResult.orderedSame {
                 return trimmed
             }
         }
