@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_NAME="AiUsage"
 BUNDLE_ID="com.jsbanana.aiusage"
-VERSION="0.1.4"
+VERSION="0.1.5"
 BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
 BUILD_CONFIGURATION="release"
 
