@@ -43,6 +43,7 @@ struct MiMoWebLoginWindowView: View {
                     loginError = error.localizedDescription
                 }
             )
+            .id(appState.miMoLoginSessionID)
         }
         .frame(minWidth: 920, idealWidth: 920, minHeight: 720, idealHeight: 720)
     }

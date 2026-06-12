@@ -34,11 +34,13 @@ final class AppState {
     var statusMessage = "准备就绪"
     var providerTabs: [ProviderTabItem] = []
     var providerPreferences: [ProviderPreferenceSnapshot] = []
+    var entitlementTargets: [EntitlementTargetDescriptor] = []
     var selectedTabID: String?
     var overviewPanel: OverviewPanelSnapshot?
     var providerPanelsByID: [String: ProviderPanelSnapshot] = [:]
     var entitlementSummariesByTarget: [String: EntitlementSummarySnapshot] = [:]
     var completedMiMoLoginSequence = 0
+    var miMoLoginSessionID = UUID()
     var menuBarSummary: MenuBarSummarySnapshot = .init(
         title: "AiUsage",
         subtitle: "暂无数据",
@@ -95,10 +97,6 @@ final class AppState {
         QuotaAccountReadModel.makeGroups(entitlementsByTarget: entitlementSummariesByTarget)
     }
 
-    var menuBarTargetPreference: QuotaMenuBarTargetPreference {
-        EntitlementPreferences.menuBarTargetPreference()
-    }
-
     func startIfNeeded() async {
         guard hasBootstrapped == false else { return }
         guard dataService != nil else {
@@ -148,6 +146,7 @@ final class AppState {
             guard refreshSequence == refreshID else { return false }
             providerTabs = snapshot.providerTabs
             providerPreferences = snapshot.providerPreferences
+            entitlementTargets = snapshot.entitlementTargets
             overviewPanel = snapshot.overview
             providerPanelsByID = snapshot.panelsByID
             entitlementSummariesByTarget = snapshot.entitlementSummariesByTarget
@@ -240,7 +239,7 @@ final class AppState {
                 baseSnapshot = AppSnapshot(
                     providerTabs: providerTabs,
                     providerPreferences: providerPreferences,
-                    entitlementTargets: [],
+                    entitlementTargets: entitlementTargets,
                     selectedTabID: selectedTabID ?? EntitlementTargetID.overview.storageKey,
                     overview: overviewPanel,
                     panelsByID: providerPanelsByID,
@@ -313,9 +312,8 @@ final class AppState {
         completedMiMoLoginSequence += 1
     }
 
-    func setMenuBarTargetPreference(_ preference: QuotaMenuBarTargetPreference) {
-        EntitlementPreferences.setMenuBarTargetPreference(preference)
-        refreshMenuBarSummary()
+    func prepareMiMoLoginSession() {
+        miMoLoginSessionID = UUID()
     }
 
     func startAutoRefresh(intervalSeconds: TimeInterval? = nil) {
@@ -343,6 +341,7 @@ final class AppState {
     private func applyUsageSnapshot(_ snapshot: AppSnapshot) {
         providerTabs = snapshot.providerTabs
         providerPreferences = snapshot.providerPreferences
+        entitlementTargets = snapshot.entitlementTargets
         overviewPanel = snapshot.overview
         providerPanelsByID = snapshot.panelsByID
         selectedTabID = snapshot.selectedTabID
@@ -356,7 +355,7 @@ final class AppState {
 
     private func refreshMenuBarSummary() {
         menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            targetPreference: EntitlementPreferences.menuBarTargetPreference(),
+            targetPreference: .auto,
             overview: overviewPanel,
             entitlementsByTarget: entitlementSummariesByTarget
         )

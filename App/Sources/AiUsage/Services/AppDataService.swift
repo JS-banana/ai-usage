@@ -58,7 +58,7 @@ actor AppDataService {
         var snapshot = try await readModelService.makeSnapshot(preferredTabID: preferredTabID)
         snapshot.statusMessage = "Usage 已刷新"
         snapshot.menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            targetPreference: EntitlementPreferences.menuBarTargetPreference(),
+            targetPreference: .auto,
             overview: snapshot.overview,
             entitlementsByTarget: snapshot.entitlementSummariesByTarget
         )
@@ -76,7 +76,7 @@ actor AppDataService {
             now: Date()
         )
         snapshot.menuBarSummary = menuBarSummaryReadModelService.makeSummary(
-            targetPreference: EntitlementPreferences.menuBarTargetPreference(),
+            targetPreference: .auto,
             overview: snapshot.overview,
             entitlementsByTarget: snapshot.entitlementSummariesByTarget
         )

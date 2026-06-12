@@ -8,6 +8,17 @@ struct AccountFetchResult: Sendable {
     let compensationUsed: Int
     let compensationLimit: Int
     let expiresAt: Date?
+    let planName: String?
+    let profile: MiMoAccountProfile?
+    let capturedAt: Date?
+
+    var totalUsed: Int {
+        planUsed + compensationUsed
+    }
+
+    var totalLimit: Int {
+        planLimit + compensationLimit
+    }
 }
 
 actor MiMoQuotaService {
@@ -36,7 +47,8 @@ actor MiMoQuotaService {
             serviceToken: serviceToken,
             targetID: targetID,
             title: title,
-            now: now
+            now: now,
+            includeProfile: false
         )
         return result.snapshot
     }
@@ -74,7 +86,8 @@ actor MiMoQuotaService {
                 serviceToken: serviceToken,
                 targetID: targetID,
                 title: title,
-                now: now
+                now: now,
+                includeProfile: true
             )
             return AccountFetchResult(
                 snapshot: result.snapshot,
@@ -83,7 +96,10 @@ actor MiMoQuotaService {
                 planLimit: result.planLimit,
                 compensationUsed: result.compensationUsed,
                 compensationLimit: result.compensationLimit,
-                expiresAt: result.expiresAt
+                expiresAt: result.expiresAt,
+                planName: result.planName,
+                profile: result.profile,
+                capturedAt: now
             )
         } catch {
             return AccountFetchResult(
@@ -93,7 +109,10 @@ actor MiMoQuotaService {
                 planLimit: 0,
                 compensationUsed: 0,
                 compensationLimit: 0,
-                expiresAt: nil
+                expiresAt: nil,
+                planName: nil,
+                profile: nil,
+                capturedAt: nil
             )
         }
     }
@@ -105,6 +124,8 @@ actor MiMoQuotaService {
         let compensationUsed: Int
         let compensationLimit: Int
         let expiresAt: Date?
+        let planName: String?
+        let profile: MiMoAccountProfile?
     }
 
     private nonisolated static func fetchFromAPI(
@@ -112,7 +133,8 @@ actor MiMoQuotaService {
         serviceToken: MiMoServiceToken,
         targetID: EntitlementTargetID,
         title: String,
-        now: Date
+        now: Date,
+        includeProfile: Bool
     ) async throws -> FetchAPIResult {
         let request = makeRequest(
             path: "/api/v1/tokenPlan/usage",
@@ -157,19 +179,21 @@ actor MiMoQuotaService {
         let totalUsed = planUsed + compensationUsed
         let totalLimit = planLimit + compensationLimit
         let totalProgress = totalLimit > 0 ? Double(totalUsed) / Double(totalLimit) : 0
+        let detail = await fetchDetail(client: client, serviceToken: serviceToken)
         let expiresAt: Date?
         if let usageExpiry = decoded.data.expiresAt {
             expiresAt = usageExpiry
         } else {
-            expiresAt = await fetchDetailExpiry(client: client, serviceToken: serviceToken)
+            expiresAt = detail.expiresAt
         }
+        let profile = includeProfile ? await fetchUserProfile(client: client, serviceToken: serviceToken) : nil
 
         let primaryWindow = EntitlementWindowSnapshot(
             id: "\(targetID.storageKey)-mimo-primary",
             title: "套餐总额度",
-            detailText: tokenUsageDetailText(used: totalUsed, limit: totalLimit),
+            detailText: includeProfile ? tokenUsageDetailText(used: totalUsed, limit: totalLimit) : "",
             primaryText: usedPercentText(totalProgress),
-            secondaryText: compactDateText(expiresAt),
+            secondaryText: includeProfile ? compactDateText(expiresAt) : "",
             footnoteText: "",
             progress: clampedProgress(totalProgress)
         )
@@ -196,7 +220,9 @@ actor MiMoQuotaService {
             planLimit: planLimit,
             compensationUsed: compensationUsed,
             compensationLimit: compensationLimit,
-            expiresAt: expiresAt
+            expiresAt: expiresAt,
+            planName: detail.planName,
+            profile: profile
         )
     }
 
@@ -204,19 +230,9 @@ actor MiMoQuotaService {
         "\(clampedProgress(progress).formatted(.percent.precision(.fractionLength(0)))) used"
     }
 
-    private nonisolated static func trimmed(_ value: Double) -> String {
-        let formatted = String(format: "%.2f", value)
-        return formatted
-            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
-    }
-
     private nonisolated static func compactDateText(_ date: Date?) -> String {
         guard let date else { return "expires unknown" }
         return "expires \(date.formatted(date: .numeric, time: .omitted))"
-    }
-
-    private nonisolated static func clampedProgress(_ progress: Double) -> Double {
-        min(max(progress, 0), 1)
     }
 
     private nonisolated static func tokenUsageDetailText(used: Int, limit: Int) -> String {
@@ -231,10 +247,17 @@ actor MiMoQuotaService {
         if absolute >= 1_000_000 {
             return "\(trimmed(Double(value) / 1_000_000))M"
         }
-        if absolute >= 1_000 {
-            return "\(trimmed(Double(value) / 1_000))K"
-        }
         return value.formatted()
+    }
+
+    private nonisolated static func trimmed(_ value: Double) -> String {
+        let formatted = String(format: "%.2f", value)
+        return formatted
+            .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    }
+
+    private nonisolated static func clampedProgress(_ progress: Double) -> Double {
+        min(max(progress, 0), 1)
     }
 
     private nonisolated static func makeRequest(
@@ -253,17 +276,40 @@ actor MiMoQuotaService {
         return request
     }
 
-    private nonisolated static func fetchDetailExpiry(
+    private struct TokenPlanDetail {
+        let expiresAt: Date?
+        let planName: String?
+    }
+
+    private nonisolated static func fetchDetail(
         client: MiMoHTTPClientProtocol,
         serviceToken: MiMoServiceToken
-    ) async -> Date? {
+    ) async -> TokenPlanDetail {
         let request = makeRequest(
             path: "/api/v1/tokenPlan/detail",
             serviceToken: serviceToken
         )
         guard let (data, response) = try? await client.execute(request),
+              response.statusCode == 200 else {
+            return TokenPlanDetail(expiresAt: nil, planName: nil)
+        }
+        return TokenPlanDetail(
+            expiresAt: MiMoExpiryFinder.find(in: data),
+            planName: MiMoPlanNameFinder.find(in: data)
+        )
+    }
+
+    private nonisolated static func fetchUserProfile(
+        client: MiMoHTTPClientProtocol,
+        serviceToken: MiMoServiceToken
+    ) async -> MiMoAccountProfile? {
+        let request = makeRequest(
+            path: "/api/v1/userProfile",
+            serviceToken: serviceToken
+        )
+        guard let (data, response) = try? await client.execute(request),
               response.statusCode == 200 else { return nil }
-        return MiMoExpiryFinder.find(in: data)
+        return MiMoUserProfileFinder.find(in: data)
     }
 
 }
@@ -450,5 +496,71 @@ private enum MiMoExpiryFinder {
 
     private static func date(fromTimestamp value: Double) -> Date {
         Date(timeIntervalSince1970: value > 10_000_000_000 ? value / 1000 : value)
+    }
+}
+
+private enum MiMoPlanNameFinder {
+    static func find(in data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return findString(key: "planName", in: object)
+    }
+
+    private static func findString(key targetKey: String, in object: Any) -> String? {
+        if let dict = object as? [String: Any] {
+            for (key, value) in dict where key == targetKey {
+                if let string = value as? String {
+                    let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }
+            }
+            for value in dict.values {
+                if let found = findString(key: targetKey, in: value) {
+                    return found
+                }
+            }
+        }
+        if let array = object as? [Any] {
+            for value in array {
+                if let found = findString(key: targetKey, in: value) {
+                    return found
+                }
+            }
+        }
+        return nil
+    }
+}
+
+private enum MiMoUserProfileFinder {
+    static func find(in data: Data) -> MiMoAccountProfile? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let profileObject = profileObject(in: object) as? [String: Any] else {
+            return nil
+        }
+        return MiMoAccountProfile(
+            userId: stringValue(profileObject["userId"]),
+            email: stringValue(profileObject["email"]),
+            platformEmail: stringValue(profileObject["platformEmail"]),
+            phone: stringValue(profileObject["phone"]),
+            nickName: stringValue(profileObject["nickName"]),
+            userName: stringValue(profileObject["userName"])
+        )
+    }
+
+    private static func profileObject(in object: Any) -> Any? {
+        if let dict = object as? [String: Any] {
+            if dict["email"] != nil || dict["phone"] != nil || dict["userId"] != nil {
+                return dict
+            }
+            if let data = dict["data"] {
+                return profileObject(in: data)
+            }
+        }
+        return nil
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        guard let string = value as? String else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

@@ -9,42 +9,45 @@ struct RootView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
-    @State private var showInlineLogin = false
+    @State private var measuredMenuBarContentHeight: CGFloat = 0
+    private let primaryContentMinHeight: CGFloat = 250
+
+    private struct MenuBarContentHeightPreferenceKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+            value = nextValue()
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             providerTabs
-            if let activeEntitlementSummary = displayedEntitlementSummary {
-                entitlementSummaryCard(activeEntitlementSummary)
-            }
-            if showInlineLogin && currentProviderSupportsAccounts {
-                inlineLoginForm
-            }
-            if appState.selectedTabID == "quota" {
-                quotaCard
-            } else {
-                summaryCard
-            }
+            primaryContentCard
             actionToolbar
             statusRow
         }
         .padding(10)
-        .frame(minWidth: 380, idealWidth: 400, maxWidth: 430, alignment: .topLeading)
+        .frame(
+            minWidth: 380,
+            idealWidth: 400,
+            maxWidth: 430,
+            alignment: .topLeading
+        )
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: MenuBarContentHeightPreferenceKey.self,
+                    value: geometry.size.height
+                )
+            }
+        )
+        .onPreferenceChange(MenuBarContentHeightPreferenceKey.self) { height in
+            measuredMenuBarContentHeight = height
+        }
+        .background(MenuBarWindowContentSizer(targetHeight: measuredMenuBarContentHeight))
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: appState.completedMiMoLoginSequence) { _, _ in
-            showInlineLogin = false
-        }
-    }
-
-    private var currentProviderSupportsAccounts: Bool {
-        guard let tabID = appState.selectedTabID, tabID != "overview" else { return false }
-        return tabID == "mimo"
-    }
-
-    private var inlineLoginForm: some View {
-        PanelCard {
-            MiMoCredentialFields()
-        }
     }
 
     private var providerTabs: some View {
@@ -57,37 +60,31 @@ struct RootView: View {
         }
     }
 
-    private func entitlementSummaryCard(_ summary: EntitlementSummarySnapshot) -> some View {
+    private var primaryContentCard: some View {
         PanelCard {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("套餐额度")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        Task { await appState.refreshCurrentEntitlement() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("刷新套餐额度")
-                    .disabled(appState.isEntitlementRefreshInProgress)
-                }
-                QuotaSummarySection(summary: summary, compact: true)
-            }
+            primaryContent
+                .frame(maxWidth: .infinity, minHeight: primaryContentMinHeight, alignment: .topLeading)
+        }
+        .transaction { transaction in
+            transaction.animation = nil
         }
     }
 
-    private var displayedEntitlementSummary: EntitlementSummarySnapshot? {
-        guard let summary = appState.activeEntitlementSummary, summary.status != .unconfigured else {
-            return nil
+    @ViewBuilder
+    private var primaryContent: some View {
+        if appState.selectedTabID == "quota" {
+            QuotaManagementView(
+                groups: appState.quotaGroups
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        } else {
+            summaryContent
         }
-        return summary
     }
 
-    private var summaryCard: some View {
-        PanelCard {
+    @ViewBuilder
+    private var summaryContent: some View {
+        Group {
             if appState.selectedTabID == "overview" {
                 overviewSummary
             } else if let panel = appState.selectedPanel {
@@ -95,21 +92,6 @@ struct RootView: View {
             } else {
                 SectionEmptyState(title: "暂无来源数据", message: "在下方添加或启用账号来源后，这里会显示统计。")
             }
-        }
-    }
-
-    private var quotaCard: some View {
-        PanelCard {
-            QuotaManagementView(
-                groups: appState.quotaGroups,
-                selectedMenuBarTarget: appState.menuBarTargetPreference,
-                setMenuBarTarget: { appState.setMenuBarTargetPreference($0) },
-                refresh: { Task { await appState.refreshCurrentEntitlement() } },
-                addMiMoAccount: {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: "mimo-login")
-                }
-            )
         }
     }
 
@@ -165,20 +147,16 @@ struct RootView: View {
     private var actionToolbar: some View {
         PanelCard {
             VStack(spacing: 0) {
-                if currentProviderSupportsAccounts {
+                if appState.selectedTabID == "quota" {
                     ActionListRow(title: "添加账号", systemImage: "person.badge.plus") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showInlineLogin.toggle()
-                        }
+                        openMiMoLoginWindow()
+                    }
+                    ActionListRow(title: "刷新额度", systemImage: "gauge.with.dots.needle.bottom.50percent") {
+                        Task { await appState.refreshCurrentEntitlement() }
                     }
                 }
                 ActionListRow(title: appState.isLoading ? "刷新中…" : "刷新", systemImage: "arrow.clockwise") {
                     Task { await appState.refresh() }
-                }
-                if currentProviderSupportsAccounts {
-                    ActionListRow(title: "刷新额度", systemImage: "gauge.with.dots.needle.bottom.50percent") {
-                        Task { await appState.refreshCurrentEntitlement() }
-                    }
                 }
                 ActionListRow(title: "Dashboard", systemImage: "rectangle.grid.2x2") {
                     openWindow(id: "detail")
@@ -200,6 +178,7 @@ struct RootView: View {
         Text(appState.statusMessage)
             .font(.caption)
             .foregroundStyle(statusColor)
+            .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -232,6 +211,12 @@ struct RootView: View {
     private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
+    private func openMiMoLoginWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        appState.prepareMiMoLoginSession()
+        openWindow(id: "mimo-login")
     }
 
     private func openSettingsFrontmost() {
@@ -298,6 +283,34 @@ private struct ProviderTabButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(tab.name))
+    }
+}
+
+private struct MenuBarWindowContentSizer: NSViewRepresentable {
+    let targetHeight: CGFloat
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            updateWindowSize(for: view, targetHeight: targetHeight)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            updateWindowSize(for: nsView, targetHeight: targetHeight)
+        }
+    }
+
+    private func updateWindowSize(for view: NSView, targetHeight: CGFloat) {
+        guard let window = view.window, targetHeight > 0 else { return }
+
+        let currentSize = window.contentLayoutRect.size
+        let nextSize = NSSize(width: currentSize.width, height: targetHeight)
+        if abs(currentSize.height - nextSize.height) > 0.5 {
+            window.setContentSize(nextSize)
+        }
     }
 }
 

@@ -5,6 +5,13 @@ import Query
 
 @MainActor
 final class AppStateTests: XCTestCase {
+    func testRefreshPolicyDefaultsToTenMinuteUsageAndThirtyMinuteEntitlementTTL() {
+        let policy = RefreshPolicy()
+        XCTAssertEqual(policy.usageTTL, 600)
+        XCTAssertEqual(policy.entitlementTTL, 1800)
+        XCTAssertEqual(policy.schedulerTick, 60)
+    }
+
     func testBootstrapFailureSurfacesStatusInsteadOfCrashing() async {
         let state = AppState(bootstrapError: BootstrapTestError.failed)
 
@@ -116,6 +123,29 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.lastEntitlementRefresh, now.addingTimeInterval(-120))
     }
 
+    func testRefreshIfStaleUsesDefaultRefreshPolicyValues() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = CountingEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        state.lastUsageRefresh = now.addingTimeInterval(-601)
+        state.lastEntitlementRefresh = now.addingTimeInterval(-120)
+
+        await state.refreshIfStale(now: now)
+
+        XCTAssertEqual(importRunner.runCount, 1)
+        XCTAssertEqual(entitlementResolver.resolveCallCount, 0)
+        XCTAssertNotNil(state.lastUsageRefresh)
+        XCTAssertEqual(state.lastEntitlementRefresh, now.addingTimeInterval(-120))
+    }
+
     func testRefreshCurrentEntitlementDoesNotRunUsageImport() async {
         let importRunner = CountingImportRunnerStub()
         let entitlementResolver = CountingEntitlementResolverStub()
@@ -132,6 +162,62 @@ final class AppStateTests: XCTestCase {
 
         XCTAssertEqual(importRunner.runCount, 0)
         XCTAssertEqual(entitlementResolver.resolveCallCount, 1)
+    }
+
+    func testRefreshCurrentEntitlementKeepsTargetsFromUsageSnapshot() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = DescriptorEchoEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EntitlementTargetSnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+
+        await state.refreshUsage(trigger: .startup)
+        await state.refreshCurrentEntitlement()
+
+        XCTAssertEqual(importRunner.runCount, 1)
+        XCTAssertEqual(entitlementResolver.lastDescriptorIDs, ["overview", "mimo"])
+        XCTAssertNotNil(state.entitlementSummariesByTarget["mimo"])
+    }
+
+    func testFullRefreshPersistsEntitlementTargetsForLaterEntitlementOnlyRefresh() async {
+        let importRunner = CountingImportRunnerStub()
+        let entitlementResolver = DescriptorEchoEntitlementResolverStub()
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: importRunner,
+                readModelService: EntitlementTargetSnapshotReaderStub(),
+                entitlementService: entitlementResolver,
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+
+        await state.refresh(trigger: .manual)
+        await state.refreshCurrentEntitlement()
+
+        XCTAssertEqual(importRunner.runCount, 1)
+        XCTAssertEqual(state.entitlementTargets.map(\.id), ["overview", "mimo"])
+        XCTAssertEqual(entitlementResolver.lastDescriptorIDs, ["overview", "mimo"])
+    }
+
+    func testPreparingMiMoLoginSessionChangesWebViewIdentity() {
+        let state = AppState(
+            dataService: AppDataService(
+                importCoordinator: CancelledImportRunnerStub(),
+                readModelService: EmptySnapshotReaderStub(),
+                entitlementService: EmptyEntitlementResolverStub(),
+                menuBarSummaryReadModelService: MenuBarSummaryReadModelService()
+            )
+        )
+        let firstID = state.miMoLoginSessionID
+
+        state.prepareMiMoLoginSession()
+
+        XCTAssertNotEqual(state.miMoLoginSessionID, firstID)
     }
 
     func testRefreshCurrentEntitlementCanRunWhileUsageRefreshIsSuspended() async {
@@ -349,6 +435,49 @@ private struct EmptySnapshotReaderStub: AppSnapshotReading {
     }
 }
 
+private struct EntitlementTargetSnapshotReaderStub: AppSnapshotReading {
+    func makeSnapshot(preferredTabID: String?) async throws -> AppSnapshot {
+        AppSnapshot(
+            providerTabs: [
+                ProviderTabItem(
+                    id: EntitlementTargetID.overview.storageKey,
+                    name: "总览",
+                    status: .ready,
+                    branding: ProviderBrandCatalog.branding(for: "overview", fallbackName: "总览"),
+                    usageProgress: nil
+                ),
+                ProviderTabItem(
+                    id: "quota",
+                    name: "额度",
+                    status: .ready,
+                    branding: ProviderBrandCatalog.branding(for: "quota", fallbackName: "额度"),
+                    usageProgress: nil
+                )
+            ],
+            providerPreferences: [],
+            entitlementTargets: [
+                EntitlementTargetDescriptor(targetID: .overview, name: "总览", supportsOfficial: false),
+                EntitlementTargetDescriptor(targetID: .provider("mimo"), name: "MiMo", supportsOfficial: false)
+            ],
+            selectedTabID: "quota",
+            overview: OverviewPanelSnapshot(
+                todayTokens: 1,
+                sevenDayTokens: 1,
+                todayRequests: 1,
+                sevenDayRequests: 1,
+                cachedTokens: 0,
+                activeSources: 1,
+                trendPoints: [],
+                providerRows: [],
+                lastRefresh: Date()
+            ),
+            panelsByID: [:],
+            lastRefresh: Date(),
+            statusMessage: "Usage 已刷新"
+        )
+    }
+}
+
 private struct EmptyEntitlementResolverStub: EntitlementResolving {
     func resolveSummaries(
         descriptors: [EntitlementTargetDescriptor],
@@ -371,5 +500,33 @@ private final class CountingEntitlementResolverStub: EntitlementResolving, @unch
     ) async -> [String: EntitlementSummarySnapshot] {
         resolveCallCount += 1
         return [:]
+    }
+}
+
+private final class DescriptorEchoEntitlementResolverStub: EntitlementResolving, @unchecked Sendable {
+    private(set) var lastDescriptorIDs: [String] = []
+
+    func resolveSummaries(
+        descriptors: [EntitlementTargetDescriptor],
+        visibleProviderIDs: Set<String>,
+        trigger: ImportTrigger,
+        now: Date
+    ) async -> [String: EntitlementSummarySnapshot] {
+        lastDescriptorIDs = descriptors.map(\.id)
+        return Dictionary(uniqueKeysWithValues: descriptors.map { descriptor in
+            (
+                descriptor.id,
+                EntitlementSummarySnapshot.placeholder(
+                    targetID: descriptor.targetID,
+                    title: descriptor.name,
+                    message: "",
+                    status: .ready,
+                    sourceKind: descriptor.id == "mimo" ? .mimo : nil,
+                    primaryText: "ready",
+                    secondaryText: "",
+                    footnote: ""
+                )
+            )
+        })
     }
 }

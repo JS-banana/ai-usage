@@ -1,6 +1,10 @@
 # OMX local state
 .omx/
 
+# Claude Code local state
+.hippos/
+.superpowers/
+
 # Swift Package Manager
 .build/
 .swiftpm/

@@ -9,11 +9,46 @@ struct MiMoAccount: Identifiable, Sendable, Codable {
     let id: UUID
     let credentials: MiMoCredentials
     let displayName: String
+    let email: String?
+    let phone: String?
+    let platformEmail: String?
+    let planName: String?
 
-    init(id: UUID = UUID(), credentials: MiMoCredentials, displayName: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        credentials: MiMoCredentials,
+        displayName: String? = nil,
+        email: String? = nil,
+        phone: String? = nil,
+        platformEmail: String? = nil,
+        planName: String? = nil
+    ) {
         self.id = id
         self.credentials = credentials
         self.displayName = displayName ?? credentials.username
+        self.email = email
+        self.phone = phone
+        self.platformEmail = platformEmail
+        self.planName = planName
+    }
+}
+
+struct MiMoAccountProfile: Hashable, Sendable, Codable {
+    let userId: String?
+    let email: String?
+    let platformEmail: String?
+    let phone: String?
+    let nickName: String?
+    let userName: String?
+
+    var preferredDisplayName: String? {
+        for value in [email, platformEmail, phone, userName, nickName] {
+            let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty == false {
+                return trimmed
+            }
+        }
+        return nil
     }
 }
 

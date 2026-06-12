@@ -3,11 +3,13 @@ import AppKit
 
 struct MiMoCredentialFields: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(AppState.self) private var appState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: {
                 NSApp.activate(ignoringOtherApps: true)
+                appState.prepareMiMoLoginSession()
                 openWindow(id: "mimo-login")
             }) {
                 HStack(spacing: 6) {
